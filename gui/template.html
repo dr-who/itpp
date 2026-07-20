@@ -3,8 +3,10 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="color-scheme" content="dark" />
 <title>ITPP genome browser</title>
 <style>
+  :root { color-scheme: dark; }
   :root {
     --bg:#0d1117; --panel:#161b22; --line:#30363d; --fg:#e6edf3; --dim:#8b949e;
     --backbone:#3b82f6; --variant:#a855f7; --hit:#e3b341; --edge:#6e7681;
@@ -36,7 +38,8 @@
   .tube { width:100%; overflow-x:auto; }
   svg { display:block; }
   .node rect { stroke-width:1.5; cursor:pointer; }
-  .node text { font-family:ui-monospace,monospace; font-size:11px; pointer-events:none; }
+  .node text { font-family:ui-monospace,monospace; font-size:11px; pointer-events:none; fill:var(--fg); }
+  svg text { fill:var(--fg); }
   .node.backbone rect { fill:#132a4d; stroke:var(--backbone); }
   .node.variant  rect { fill:#241436; stroke:var(--variant); }
   .node.hit      rect { fill:#3a2f0a; stroke:var(--hit); stroke-width:2.5; }
@@ -94,10 +97,17 @@ const COLW = 150, LANEH = 56, NW = 108, NH = 32;
 const collapsed = new Map(); // key `${hitIdx}:${x}` -> true
 
 function nodeClass(n) { return n.hit ? "hit" : (n.backbone ? "backbone" : "variant"); }
+function mkTitle(text) {
+  const t = document.createElementNS("http://www.w3.org/2000/svg", "title");
+  t.textContent = text; return t;
+}
 
 function renderHit(hit, idx) {
   const wrap = document.createElement("div");
   wrap.className = "hit";
+
+  // per-row context state so ◀/▶ can widen the window as far as the user wants
+  const st = { node: hit.node, offset: hit.offset, strand: hit.strand, left: 4, right: 4, hit };
 
   const bar = document.createElement("div");
   bar.className = "bar";
@@ -106,14 +116,37 @@ function renderHit(hit, idx) {
     `<span class="strand">${hit.strand}</span>` +
     `<span class="tag">node ${hit.node} · ${hit.n_haplotypes} haplotypes</span>` +
     `<span class="tag">protein: <b style="color:var(--aa)">${hit.protein || "—"}</b></span>`;
+  const ext = document.createElement("span");
+  ext.style.marginLeft = "auto";
+  const bL = document.createElement("button"); bL.textContent = "◀ extend";
+  const bR = document.createElement("button"); bR.textContent = "extend ▶";
+  const bAll = document.createElement("button"); bAll.textContent = "◀▶ wide";
+  ext.append(bL, " ", bR, " ", bAll);
+  bar.appendChild(ext);
   wrap.appendChild(bar);
 
   const tube = document.createElement("div");
   tube.className = "tube";
+  const codons = document.createElement("div");
+  codons.className = "codons";
+
+  function redraw() {
+    tube.replaceChildren(renderTube(st.hit, idx));
+    codons.replaceChildren(...renderCodons(st.hit).childNodes);
+  }
+  function extend(dl, dr) {
+    st.left += dl; st.right += dr;
+    const res = JSON.parse(browser.context(st.node, st.offset, st.strand, st.left, st.right));
+    if (res.hit) { st.hit = res.hit; redraw(); }
+  }
+  bL.onclick = () => extend(6, 0);
+  bR.onclick = () => extend(0, 6);
+  bAll.onclick = () => extend(10, 10);
+
   tube.appendChild(renderTube(hit, idx));
   wrap.appendChild(tube);
-
-  wrap.appendChild(renderCodons(hit));
+  codons.replaceChildren(...renderCodons(hit).childNodes);
+  wrap.appendChild(codons);
   return wrap;
 }
 
@@ -130,6 +163,17 @@ function renderTube(hit, idx) {
   const SVG = "http://www.w3.org/2000/svg";
   const svg = document.createElementNS(SVG, "svg");
   svg.setAttribute("width", W); svg.setAttribute("height", H);
+  // arrowhead markers (edges are directed: they show the order haplotypes traverse them)
+  const defs = document.createElementNS(SVG, "defs");
+  for (const [id, col] of [["ah", "var(--edge)"], ["ah2", "#e3873b"]]) {
+    const m = document.createElementNS(SVG, "marker");
+    m.setAttribute("id", id); m.setAttribute("markerWidth", "7"); m.setAttribute("markerHeight", "7");
+    m.setAttribute("refX", "6"); m.setAttribute("refY", "3"); m.setAttribute("orient", "auto");
+    const mp = document.createElementNS(SVG, "path");
+    mp.setAttribute("d", "M0,0 L6,3 L0,6 Z"); mp.setAttribute("fill", col);
+    m.appendChild(mp); defs.appendChild(m);
+  }
+  svg.appendChild(defs);
 
   const sx = x => (x - minX) * COLW + 20;
   const sy = lane => cy + lane * LANEH;
@@ -139,7 +183,11 @@ function renderTube(hit, idx) {
   const hidden = new Set();
   for (const n of nodes) if (!n.backbone && isCollapsed(n.x)) hidden.add(n.id);
 
-  // edges first (under nodes)
+  // detect bidirectional pairs: both a→b and b→a present ⇒ an inversion / cyclic link
+  const eset = new Set(hit.edges.map(([a, b]) => a + ">" + b));
+  const isBidir = (a, b) => eset.has(b + ">" + a);
+
+  // edges first (under nodes). Directed: arrowhead shows traversal order.
   for (const [a, b] of hit.edges) {
     if (hidden.has(a) || hidden.has(b)) continue;
     const na = nodes.find(n => n.id === a), nb = nodes.find(n => n.id === b);
@@ -147,9 +195,15 @@ function renderTube(hit, idx) {
     const x1 = sx(na.x) + NW, y1 = sy(na.lane) + NH / 2;
     const x2 = sx(nb.x), y2 = sy(nb.lane) + NH / 2;
     const mx = (x1 + x2) / 2;
+    const bidir = isBidir(a, b);
     const p = document.createElementNS(SVG, "path");
     p.setAttribute("class", "edge");
+    if (bidir) { p.setAttribute("stroke", "#e3873b"); p.setAttribute("marker-end", "url(#ah2)"); }
+    else { p.setAttribute("marker-end", "url(#ah)"); }
     p.setAttribute("d", `M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}`);
+    p.appendChild(mkTitle(bidir
+      ? `bidirectional link ${a}↔${b} (inversion / cycle: haplotypes traverse it both ways)`
+      : `edge ${a}→${b}`));
     svg.appendChild(p);
   }
 

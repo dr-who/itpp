@@ -121,7 +121,7 @@ impl Browser {
                 let mut from = 0;
                 while let Some(rel) = find_sub(&hay[from..], needle) {
                     let offset = from + rel;
-                    hits.push(self.build_hit(seg.id, offset, strand, radius));
+                    hits.push(self.build_hit(seg.id, offset, strand, radius, radius));
                     if hits.len() >= max_hits {
                         return hits;
                     }
@@ -155,12 +155,40 @@ impl Browser {
         s
     }
 
-    fn build_hit(&self, node: NodeId, offset: usize, strand: Strand, radius: usize) -> Hit {
+    /// Build the JSON for the local subgraph around one already-found match, with independent
+    /// upstream/downstream radii. Powers the ◀/▶ "extend context" buttons. Returns `{}` if the
+    /// node isn't in the graph.
+    #[must_use]
+    pub fn context_json(
+        &self,
+        node: NodeId,
+        offset: usize,
+        strand_sign: &str,
+        left: usize,
+        right: usize,
+    ) -> String {
+        if !self.graph.segments.contains_key(&node) {
+            return "{}".into();
+        }
+        let strand = if strand_sign == "-" { Strand::Reverse } else { Strand::Forward };
+        let off = offset.min(self.graph.segments[&node].seq.len().saturating_sub(1));
+        let hit = self.build_hit(node, off, strand, left, right);
+        format!("{{\"hit\":{}}}", hit_to_json(&hit))
+    }
+
+    fn build_hit(
+        &self,
+        node: NodeId,
+        offset: usize,
+        strand: Strand,
+        left: usize,
+        right: usize,
+    ) -> Hit {
         // BFS upstream (pred) and downstream (succ) collecting depth per node.
         let mut depth: BTreeMap<NodeId, i32> = BTreeMap::new();
         depth.insert(node, 0);
-        self.bfs(node, radius, true, &mut depth);
-        self.bfs(node, radius, false, &mut depth);
+        self.bfs(node, left, true, &mut depth);
+        self.bfs(node, right, false, &mut depth);
 
         // group by x (depth) then assign lanes: backbone at lane 0, others alternate.
         let mut by_x: BTreeMap<i32, Vec<NodeId>> = BTreeMap::new();
@@ -438,6 +466,23 @@ mod tests {
     #[test]
     fn empty_query_no_hits() {
         assert!(browser().query("", 10, 2).is_empty());
+    }
+
+    #[test]
+    fn context_widens_the_window() {
+        let b = browser();
+        let g = generate(&SynthParams { haplotypes: 6, backbone_blocks: 20, seed: 3, ..Default::default() });
+        let mid = g.backbone_walk().unwrap().steps[10].node;
+        let sub = String::from_utf8(g.segments[&mid].seq.as_bytes()[5..13].to_vec()).unwrap();
+        let hit = &b.query(&sub, 1, 2)[0];
+        let narrow = hit.nodes.len();
+        // extend far to both sides; the laid-out subgraph should grow (or stay, never shrink)
+        let wide_json = b.context_json(hit.node, hit.offset, "+", 12, 12);
+        let wide_nodes = wide_json.matches("\"id\":").count();
+        assert!(wide_nodes >= narrow, "wide {wide_nodes} should be >= narrow {narrow}");
+        assert!(wide_json.starts_with("{\"hit\":"));
+        // unknown node → empty object
+        assert_eq!(b.context_json(u64::MAX, 0, "+", 2, 2), "{}");
     }
 
     #[test]

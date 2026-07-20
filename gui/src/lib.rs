@@ -46,6 +46,19 @@ impl GenomeBrowser {
     pub fn query(&self, query: &str, max_hits: usize, radius: usize) -> String {
         self.inner.query_json(query, max_hits, radius)
     }
+
+    /// Re-extract one match's local subgraph with independent left/right radii (the ◀/▶
+    /// "extend context" buttons). Returns `{"hit":{…}}`.
+    pub fn context(
+        &self,
+        node: u64,
+        offset: usize,
+        strand: &str,
+        left: usize,
+        right: usize,
+    ) -> String {
+        self.inner.context_json(node, offset, strand, left, right)
+    }
 }
 
 /// wasm-bindgen smoke tests (run under the wasm test runner; skipped on native `cargo test`,
