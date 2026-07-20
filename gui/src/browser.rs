@@ -315,6 +315,11 @@ impl Browser {
                 s.push(',');
             }
             first = false;
+            // full sequence so the UI can render actual nucleotides at base-level zoom; capped
+            // per node to bound payload (long nodes show their first BASES_CAP bases).
+            const BASES_CAP: usize = 4000;
+            let full = seg.seq.as_bytes();
+            let seq_out = std::str::from_utf8(&full[..full.len().min(BASES_CAP)]).unwrap_or("");
             s.push_str(&format!(
                 "{{\"id\":{},\"x\":{},\"lane\":{},\"len\":{},\"bb\":{},\"kind\":{},\"seq\":{}}}",
                 seg.id,
@@ -322,8 +327,8 @@ impl Browser {
                 lane,
                 seg.seq.len(),
                 self.backbone_nodes.contains(&seg.id),
-                jstr(self.node_kind(seg.id, seg.seq.as_bytes())),
-                jstr(&preview(seg.seq.as_bytes()))
+                jstr(self.node_kind(seg.id, full)),
+                jstr(seq_out)
             ));
         }
         s.push_str("],\"edges\":[");

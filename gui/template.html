@@ -107,6 +107,7 @@ const ANNO = __ANNO_JSON__; // dbSNP/ClinVar overlay: [{pos, id, sig, cons}] in 
 const GITHUB_RAW = "https://raw.githubusercontent.com/dr-who/itpp/main/database/"; // our project only
 const SVGNS = "http://www.w3.org/2000/svg";
 let showAnno = true;
+function baseColor(b){ return {A:"#3fb950",C:"#58a6ff",G:"#e3b341",T:"#f85149",N:"#8b949e"}[b]||"#8b949e"; }
 function sigColor(s){ s=(s||"").toLowerCase();
   if(/pathogenic/.test(s)&&!/benign/.test(s)) return "#f85149";
   if(/risk|association|protective|affects/.test(s)) return "#e3873b";
@@ -164,18 +165,37 @@ function render(){
       const t=el(SVGNS,"text",{x:x+3,y:y+14,fill:"var(--fg)"}); t.textContent=n.seq.slice(0,Math.max(1,Math.floor(wd/7))); sceneG.appendChild(t);
     }
   }
-  drawAnnos(W);
+  drawBases(W,H,cy);
+  drawAnnos(W,cy);
   drawRuler(W);
 }
-function drawAnnos(W){
+// nucleotides appear once each base is at least ~7px wide (base-level zoom)
+function drawBases(W,H,cy){
+  if(view.k < 7) return;
+  const fs=Math.min(15, view.k*0.85);
+  for(const n of over.nodes){
+    const nx=screenX(n.x), seq=n.seq||"";
+    if(nx>W+10 || nx+seq.length*view.k < -10) continue;
+    const y=cy+n.lane*LANEH+NH-5;
+    const i0=Math.max(0,Math.floor((-nx)/view.k)-1), i1=Math.min(seq.length,Math.ceil((W-nx)/view.k)+1);
+    for(let i=i0;i<i1;i++){
+      const t=el(SVGNS,"text",{x:nx+i*view.k+view.k/2,y:y,"text-anchor":"middle",fill:baseColor(seq[i]),"font-size":fs});
+      t.textContent=seq[i]; t.style.pointerEvents="none"; sceneG.appendChild(t);
+    }
+  }
+}
+function drawAnnos(W,cy){
   if(!showAnno || !ANNO.length) return;
   const y=26;
   for(const a of ANNO){
     const sx=screenX(a.pos-over.start); if(sx<-2||sx>W+2) continue;
-    const t=el(SVGNS,"path",{class:"anno",d:`M${sx-3},${y} L${sx+3},${y} L${sx},${y+8} Z`,fill:sigColor(a.sig)});
+    const col=sigColor(a.sig);
+    // faint connector so the marker clearly points at its base on the backbone
+    sceneG.appendChild(el(SVGNS,"line",{x1:sx,y1:y+8,x2:sx,y2:cy,stroke:col,"stroke-width":0.5,opacity:0.28}));
+    const t=el(SVGNS,"path",{class:"anno",d:`M${sx-3},${y} L${sx+3},${y} L${sx},${y+8} Z`,fill:col});
     t.addEventListener("mousemove",e=>showTip(e,`${a.id}\n${a.sig}${a.cons?"\n"+a.cons:""}\nchr6:${a.pos.toLocaleString()}`));
     t.addEventListener("mouseleave",hideTip);
-    t.addEventListener("click",ev=>{ ev.stopPropagation(); view.k=clampK(3); view.x0=(a.pos-over.start)-(ovBox().w/2)/view.k; render(); });
+    t.addEventListener("click",ev=>{ ev.stopPropagation(); view.k=clampK(9); view.x0=(a.pos-over.start)-(ovBox().w/2)/view.k; selected=null; render(); });
     sceneG.appendChild(t);
   }
 }
