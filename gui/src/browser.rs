@@ -48,6 +48,10 @@ pub struct Browser {
     node_walks: BTreeMap<NodeId, Vec<usize>>,
     /// Cached layout: node → (x = bp offset from region start, lane). Computed once.
     layout: BTreeMap<NodeId, (i64, i32)>,
+    /// Nodes as (x, id, len) sorted by x — for O(log n + window) range queries (tiling).
+    sorted_x: Vec<(i64, NodeId, u32)>,
+    /// Longest segment, so a range query knows how far left to start scanning.
+    max_len: i64,
     /// Total backbone span in bp.
     span: i64,
 }
@@ -95,12 +99,32 @@ impl Browser {
             pred,
             node_walks,
             layout: BTreeMap::new(),
+            sorted_x: Vec::new(),
+            max_len: 0,
             span: 0,
         };
         let (layout, span) = b.compute_layout();
+        let mut sorted_x: Vec<(i64, NodeId, u32)> = layout
+            .iter()
+            .map(|(&id, &(x, _))| {
+                (x, id, b.graph.segments.get(&id).map_or(0, |s| s.seq.len()) as u32)
+            })
+            .collect();
+        sorted_x.sort_unstable_by_key(|t| t.0);
+        b.max_len = sorted_x.iter().map(|t| i64::from(t.2)).max().unwrap_or(0);
+        b.sorted_x = sorted_x;
         b.layout = layout;
         b.span = span;
         b
+    }
+
+    /// Slice of `sorted_x` that *may* overlap `[start, end)`. Monotone bounds (x only); callers
+    /// still test `x + len > start` for exact overlap. Nodes with `x < start - max_len` cannot
+    /// reach `start`, so we start there.
+    fn range_slice(&self, start: i64, end: i64) -> &[(i64, NodeId, u32)] {
+        let lo = self.sorted_x.partition_point(|t| t.0 < start - self.max_len);
+        let hi = self.sorted_x.partition_point(|t| t.0 < end);
+        &self.sorted_x[lo..hi]
     }
 
     /// Compute node positions once: backbone nodes at their cumulative bp offset (lane 0),
@@ -353,14 +377,10 @@ impl Browser {
     pub fn window_json(&self, start_off: i64, end_off: i64, with_seq: bool, max_nodes: usize) -> String {
         const BASES_CAP: usize = 4000;
         let mut in_win: Vec<&itpp_core::Segment> = self
-            .graph
-            .segments
-            .values()
-            .filter(|seg| {
-                let (x, _) = self.layout.get(&seg.id).copied().unwrap_or((0, 0));
-                let len = seg.seq.len() as i64;
-                x + len > start_off && x < end_off
-            })
+            .range_slice(start_off, end_off)
+            .iter()
+            .filter(|(x, _, len)| x + i64::from(*len) > start_off && *x < end_off)
+            .filter_map(|(_, id, _)| self.graph.segments.get(id))
             .collect();
         let truncated = in_win.len() > max_nodes;
         if truncated {
@@ -424,17 +444,13 @@ impl Browser {
         let width = (end_off - start_off).max(1);
         let mut var = vec![0u32; nbins];
         let mut maxlen = vec![0u32; nbins];
-        for seg in self.graph.segments.values() {
-            if self.backbone_nodes.contains(&seg.id) {
-                continue;
-            }
-            let (x, _) = self.layout.get(&seg.id).copied().unwrap_or((0, 0));
-            if x < start_off || x >= end_off {
+        for &(x, id, len) in self.range_slice(start_off, end_off) {
+            if x < start_off || x >= end_off || self.backbone_nodes.contains(&id) {
                 continue;
             }
             let b = (((x - start_off) * nbins as i64) / width).clamp(0, nbins as i64 - 1) as usize;
             var[b] += 1;
-            maxlen[b] = maxlen[b].max(seg.seq.len() as u32);
+            maxlen[b] = maxlen[b].max(len);
         }
         let mut s = String::from("{");
         s.push_str(&format!("\"chrom\":{},\"start\":{},\"span\":{},", jstr(&self.chrom), self.start_coord, self.span));

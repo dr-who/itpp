@@ -33,9 +33,11 @@ fn main() {
     let b = Browser::new(graph);
     let span = b.span().max(1);
 
-    // deepest level whose tiles are ~BASE_TILE_BP wide
+    // deepest level whose tiles are ~BASE_TILE_BP wide, capped so a chromosome stays ~<=32k
+    // finest tiles (2^15) rather than exploding into hundreds of thousands of files
+    const MAX_LEVEL_CAP: u32 = 15;
     let mut max_level = 0u32;
-    while (span >> (max_level + 1)) > BASE_TILE_BP && max_level < 24 {
+    while (span >> (max_level + 1)) > BASE_TILE_BP && max_level < MAX_LEVEL_CAP {
         max_level += 1;
     }
 
