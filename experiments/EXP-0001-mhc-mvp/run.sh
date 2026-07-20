@@ -26,6 +26,6 @@ echo "watch bits/char fall across commits with:  jq .bits_per_char results/metri
 # bash pipelines/01_fetch_mhc.sh
 # bash pipelines/02_extract_subgraph.sh
 # bash pipelines/03_annotate.sh
-# "$BIN" import --gfa data/graphs/mhc.gfa --out data/mhc.itpp
-# "$BIN" verify --in data/mhc.itpp --gfa data/graphs/mhc.gfa
-# "$BIN" report --in data/mhc.itpp --dataset hprc-mhc-v1.1
+# "$BIN" import --gfa database/graphs/mhc.gfa --out database/mhc.itpp
+# "$BIN" verify --in database/mhc.itpp --gfa database/graphs/mhc.gfa
+# "$BIN" report --in database/mhc.itpp --dataset hprc-mhc-v1.1

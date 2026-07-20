@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Fetch the pinned MHC inputs listed in data/manifests/mhc.tsv into data/raw/.
+# Fetch the pinned MHC inputs listed in database/manifests/mhc.tsv into database/raw/.
 # Idempotent: skips files already present. Requires curl.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-MANIFEST="data/manifests/mhc.tsv"
-mkdir -p data/raw
+MANIFEST="database/manifests/mhc.tsv"
+mkdir -p database/raw
 
-fetch() { # key -> data/raw/<basename>
+fetch() { # key -> database/raw/<basename>
   local key="$1"
   local url
   url="$(grep -P "^${key}\t" "$MANIFEST" | cut -f2)"
@@ -15,7 +15,7 @@ fetch() { # key -> data/raw/<basename>
   case "$url" in
     chr6:*) echo ".. $key is a coordinate, not a download ($url)"; return 0;;
   esac
-  local out="data/raw/$(basename "$url")"
+  local out="database/raw/$(basename "$url")"
   if [[ -f "$out" ]]; then echo "== have $out"; return 0; fi
   echo ">> $key -> $out"
   curl -L --fail --retry 3 -o "$out" "$url"

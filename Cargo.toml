@@ -1,11 +1,11 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/itpp-core",
-    "crates/itpp-codec",
-    "crates/itpp-format",
-    "crates/itpp-ingest",
-    "crates/itpp-cli",
+    "source/crates/itpp-core",
+    "source/crates/itpp-codec",
+    "source/crates/itpp-format",
+    "source/crates/itpp-ingest",
+    "source/crates/itpp-cli",
 ]
 
 [workspace.package]
@@ -17,10 +17,10 @@ repository = "https://github.com/stuartinglis/itpp"
 description = "Information-Theoretic Pangenomic Project: a two-part-code pangenome format + measurement harness"
 
 [workspace.dependencies]
-itpp-core = { path = "crates/itpp-core" }
-itpp-codec = { path = "crates/itpp-codec" }
-itpp-format = { path = "crates/itpp-format" }
-itpp-ingest = { path = "crates/itpp-ingest" }
+itpp-core = { path = "source/crates/itpp-core" }
+itpp-codec = { path = "source/crates/itpp-codec" }
+itpp-format = { path = "source/crates/itpp-format" }
+itpp-ingest = { path = "source/crates/itpp-ingest" }
 
 [profile.release]
 lto = "thin"

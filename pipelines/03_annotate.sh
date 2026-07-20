@@ -8,7 +8,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 mkdir -p data/anno
-REF="data/graphs/mhc_backbone.fa"   # produced by slicing the backbone; see 02_extract_subgraph.sh notes
+REF="database/graphs/mhc_backbone.fa"   # produced by slicing the backbone; see 02_extract_subgraph.sh notes
 
 # --- repeats + ERV ----------------------------------------------------------
 if command -v RepeatMasker >/dev/null 2>&1 && [[ -f "$REF" ]]; then
@@ -20,7 +20,7 @@ else
 fi
 
 # --- contamination ----------------------------------------------------------
-KDB="$(ls -d data/raw/k2_* 2>/dev/null | head -1 || true)"
+KDB="$(ls -d database/raw/k2_* 2>/dev/null | head -1 || true)"
 if command -v kraken2 >/dev/null 2>&1 && [[ -n "$KDB" && -f "$REF" ]]; then
   echo ">> Kraken2 contamination screen"
   kraken2 --db "$KDB" --output data/anno/kraken2.out --report data/anno/kraken2.report "$REF"
@@ -29,7 +29,7 @@ else
 fi
 
 # --- methylation ------------------------------------------------------------
-ONT_BAM="${ONT_BAM:-data/raw/mhc.ont.bam}"   # an ONT alignment carrying MM/ML modified-base tags
+ONT_BAM="${ONT_BAM:-database/raw/mhc.ont.bam}"   # an ONT alignment carrying MM/ML modified-base tags
 if command -v modkit >/dev/null 2>&1 && [[ -f "$ONT_BAM" ]]; then
   echo ">> modkit pileup (methylation channel)"
   modkit pileup "$ONT_BAM" data/anno/methyl.bed --ref "$REF"

@@ -33,8 +33,8 @@ Done. Next:
   bash pipelines/01_fetch_mhc.sh
   bash pipelines/02_extract_subgraph.sh
   bash pipelines/03_annotate.sh
-  cargo run --release -p itpp-cli -- import --gfa data/graphs/mhc.gfa --out data/mhc.itpp
-  cargo run --release -p itpp-cli -- measure --in data/mhc.itpp
+  cargo run --release -p itpp-cli -- import --gfa database/graphs/mhc.gfa --out database/mhc.itpp
+  cargo run --release -p itpp-cli -- measure --in database/mhc.itpp
 
 Notes:
   * RepeatMasker needs a Dfam library (the bioconda package ships a minimal one; for the full

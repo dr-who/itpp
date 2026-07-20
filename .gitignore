@@ -1,9 +1,9 @@
 /target
 Cargo.lock
 # large downloaded / derived data — keep manifests, not payloads
-/data/raw/
-/data/refs/
-/data/graphs/
+/database/raw/
+/database/refs/
+/database/graphs/
 *.itpp
 *.gfa
 *.fa
