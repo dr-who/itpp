@@ -148,13 +148,14 @@ fn parse_walk_steps(walk: &str, interner: &mut Interner) -> Vec<Step> {
     steps
 }
 
-/// Heuristic: a walk whose name looks like a reference spine, else the first walk.
+/// Heuristic: pick a reference-spine walk, preferring GRCh38 (so genomic coordinates match
+/// annotation databases like dbSNP/ClinVar), then CHM13/T2T, then any reference-ish name,
+/// else the first walk. Hints are tried in priority order.
 #[must_use]
 pub fn pick_backbone(g: &Graph) -> Option<String> {
-    const HINTS: [&str; 6] = ["backbone", "chm13", "grch38", "_ref", "reference", "t2t"];
-    for w in &g.walks {
-        let lower = w.name.to_ascii_lowercase();
-        if HINTS.iter().any(|h| lower.contains(h)) {
+    const HINTS: [&str; 6] = ["grch38", "chm13", "t2t", "reference", "backbone", "_ref"];
+    for hint in HINTS {
+        if let Some(w) = g.walks.iter().find(|w| w.name.to_ascii_lowercase().contains(hint)) {
             return Some(w.name.clone());
         }
     }
