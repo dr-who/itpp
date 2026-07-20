@@ -260,7 +260,16 @@ async function loadContainer(bytes){
 }
 function setupInteractions(){
   let drag=null;
-  ov.addEventListener("wheel",e=>{ e.preventDefault(); const r=ov.getBoundingClientRect(); zoomAt(e.clientX-r.left, e.deltaY<0?1.18:1/1.18); },{passive:false});
+  ov.addEventListener("wheel",e=>{
+    e.preventDefault(); const r=ov.getBoundingClientRect(), px=e.clientX-r.left;
+    if(e.ctrlKey){ // trackpad pinch → zoom
+      zoomAt(px, e.deltaY<0?1.06:1/1.06);
+    } else if(Math.abs(e.deltaX) > Math.abs(e.deltaY)){ // two-finger horizontal → pan
+      view.x0 += e.deltaX/view.k; render();
+    } else { // two-finger vertical → zoom
+      zoomAt(px, e.deltaY<0?1.12:1/1.12);
+    }
+  },{passive:false});
   ov.addEventListener("mousedown",e=>{ drag={x:e.clientX,x0:view.x0}; ov.classList.add("drag"); });
   window.addEventListener("mousemove",e=>{ if(!drag)return; view.x0=drag.x0-(e.clientX-drag.x)/view.k; render(); });
   window.addEventListener("mouseup",()=>{ drag=null; ov.classList.remove("drag"); });
