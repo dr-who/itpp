@@ -1,0 +1,12 @@
+[package]
+name = "itpp-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Core types for the ITPP two-part-code pangenome (sequence, graph, walks, dictionaries, samples)."
+
+[dependencies]
+
+[lints.clippy]
+all = "warn"

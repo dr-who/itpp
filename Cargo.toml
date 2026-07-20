@@ -1,0 +1,27 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/itpp-core",
+    "crates/itpp-codec",
+    "crates/itpp-format",
+    "crates/itpp-ingest",
+    "crates/itpp-cli",
+]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2021"
+rust-version = "1.94"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/stuartinglis/itpp"
+description = "Information-Theoretic Pangenomic Project: a two-part-code pangenome format + measurement harness"
+
+[workspace.dependencies]
+itpp-core = { path = "crates/itpp-core" }
+itpp-codec = { path = "crates/itpp-codec" }
+itpp-format = { path = "crates/itpp-format" }
+itpp-ingest = { path = "crates/itpp-ingest" }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

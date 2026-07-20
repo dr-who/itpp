@@ -1,0 +1,15 @@
+# ITPP data manifest — MHC (chr6 ~5 Mb) milestone.
+# Pinned sources for the EXP-0001 MHC run. Downloads land in data/ (gitignored); only this
+# manifest is tracked. Columns: key <TAB> url <TAB> notes
+#
+# Verify/update URLs against the HPRC release index before a fetch:
+#   https://github.com/human-pangenomics/hpp_pangenome_resources
+#
+key	url	notes
+hprc_mc_gfa	https://s3-us-west-2.amazonaws.com/human-pangenomics/pangenomes/freeze/freeze1/minigraph-cactus/hprc-v1.1-mc-grch38/hprc-v1.1-mc-grch38.gfa.gz	whole-genome minigraph-cactus graph (GRCh38-based); MHC subgraph extracted from this
+grch38_ref	https://s3-us-west-2.amazonaws.com/human-pangenomics/working/HPRC_PLUS/GRCh38/assemblies/GRCh38_no_alt_analysis_set.fasta	linear backbone reference (chr6 MHC window sliced out)
+chm13_ref	https://s3-us-west-2.amazonaws.com/human-pangenomics/T2T/CHM13/assemblies/analysis_set/chm13v2.0.fa.gz	T2T-CHM13 alternative backbone
+dfam_min	https://www.dfam.org/releases/current/families/Dfam_curatedonly.h5.gz	RepeatMasker/Dfam curated library (repeats + HERV/ERV families)
+kraken2_db	https://genome-idx.s3.amazonaws.com/kraken/k2_standard_08gb_20240605.tar.gz	Kraken2 standard-8GB DB for contamination screening
+# MHC window (GRCh38): chr6:28,510,120-33,480,577  (classic hypervariable pangenome benchmark)
+mhc_region	chr6:28510120-33480577	GRCh38 coordinates of the MHC window to extract

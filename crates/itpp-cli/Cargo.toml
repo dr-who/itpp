@@ -1,0 +1,20 @@
+[package]
+name = "itpp-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "The `itpp` command-line interface: import / annotate / measure / verify / stats / report."
+
+[[bin]]
+name = "itpp"
+path = "src/main.rs"
+
+[dependencies]
+itpp-core.workspace = true
+itpp-codec.workspace = true
+itpp-format.workspace = true
+itpp-ingest.workspace = true
+
+[lints.clippy]
+all = "warn"

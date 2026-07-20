@@ -1,0 +1,19 @@
+/target
+Cargo.lock
+# large downloaded / derived data — keep manifests, not payloads
+/data/raw/
+/data/refs/
+/data/graphs/
+*.itpp
+*.gfa
+*.fa
+*.fasta
+*.fa.gz
+*.fasta.gz
+*.bam
+*.cram
+*.vcf
+*.vcf.gz
+# but do track small fixtures explicitly committed under experiments/
+!experiments/**/*.gfa
+!experiments/**/*.fa
