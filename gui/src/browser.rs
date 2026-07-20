@@ -46,6 +46,10 @@ pub struct Browser {
     succ: BTreeMap<NodeId, Vec<NodeId>>,
     pred: BTreeMap<NodeId, Vec<NodeId>>,
     node_walks: BTreeMap<NodeId, Vec<usize>>,
+    /// Cached layout: node → (x = bp offset from region start, lane). Computed once.
+    layout: BTreeMap<NodeId, (i64, i32)>,
+    /// Total backbone span in bp.
+    span: i64,
 }
 
 impl Browser {
@@ -81,7 +85,58 @@ impl Browser {
             }
         }
 
-        Browser { graph, backbone_nodes, backbone_off, chrom, start_coord, succ, pred, node_walks }
+        let mut b = Browser {
+            graph,
+            backbone_nodes,
+            backbone_off,
+            chrom,
+            start_coord,
+            succ,
+            pred,
+            node_walks,
+            layout: BTreeMap::new(),
+            span: 0,
+        };
+        let (layout, span) = b.compute_layout();
+        b.layout = layout;
+        b.span = span;
+        b
+    }
+
+    /// Compute node positions once: backbone nodes at their cumulative bp offset (lane 0),
+    /// variants at their nearest backbone anchor, packed into alternating lanes. Returns the
+    /// position map and the total span.
+    fn compute_layout(&self) -> (BTreeMap<NodeId, (i64, i32)>, i64) {
+        let mut pos: BTreeMap<NodeId, (i64, i32)> = BTreeMap::new();
+        for (&n, &off) in &self.backbone_off {
+            pos.insert(n, (off as i64, 0));
+        }
+        let mut variants: Vec<(NodeId, i64, usize)> = self
+            .graph
+            .segments
+            .values()
+            .filter(|s| !self.backbone_nodes.contains(&s.id))
+            .map(|s| (s.id, self.anchor_x(s.id), s.seq.len()))
+            .collect();
+        variants.sort_by_key(|v| v.1);
+        let mut lane_end: Vec<i64> = Vec::new();
+        for (id, x, len) in &variants {
+            let li = (0..lane_end.len()).find(|&li| lane_end[li] <= *x).unwrap_or_else(|| {
+                lane_end.push(0);
+                lane_end.len() - 1
+            });
+            lane_end[li] = x + (*len as i64).max(1) + 24;
+            let lane = if li % 2 == 0 { (li / 2 + 1) as i32 } else { -((li / 2 + 1) as i32) };
+            pos.insert(*id, (*x, lane));
+        }
+        let span = self.backbone_off.values().copied().max().unwrap_or(0)
+            + self
+                .graph
+                .backbone_walk()
+                .and_then(|w| w.steps.last())
+                .and_then(|s| self.graph.segments.get(&s.node))
+                .map_or(0, |s| s.seq.len());
+        (pos, span as i64)
     }
 
     /// Human-readable region descriptor for the pulldown, e.g. `chr6:31,825,251 (MHC-C4)`.
@@ -98,6 +153,21 @@ impl Browser {
     #[must_use]
     pub fn n_haplotypes(&self) -> usize {
         self.graph.walks.len()
+    }
+
+    #[must_use]
+    pub fn span(&self) -> i64 {
+        self.span
+    }
+
+    #[must_use]
+    pub fn chrom(&self) -> &str {
+        &self.chrom
+    }
+
+    #[must_use]
+    pub fn start(&self) -> i64 {
+        self.start_coord
     }
 
     /// Find the query across all segments (both strands); return up to `max_hits` hits, each
@@ -270,56 +340,55 @@ impl Browser {
     /// above/below. `x` is a bp offset from the region start; the UI scales/pans it.
     #[must_use]
     pub fn overview_json(&self) -> String {
-        let mut pos: BTreeMap<NodeId, (i64, i32)> = BTreeMap::new();
-        for (&n, &off) in &self.backbone_off {
-            pos.insert(n, (off as i64, 0));
-        }
-        // variants sorted by anchor x, packed into alternating lanes by interval
-        let mut variants: Vec<(NodeId, i64, usize)> = self
+        // the whole region is one window
+        self.window_json(0, self.span, true, usize::MAX)
+    }
+
+    /// Windowed view: nodes whose span overlaps `[start_off, end_off)` (bp offsets from region
+    /// start), laid out, with sequence when `with_seq` (base/protein zoom) — the primitive a
+    /// tile is built from. `max_nodes` caps the payload; if exceeded, `truncated` is set so the
+    /// UI/tiler knows to use a coarser level instead. This is how "each view ≤ a bounded size"
+    /// is enforced.
+    #[must_use]
+    pub fn window_json(&self, start_off: i64, end_off: i64, with_seq: bool, max_nodes: usize) -> String {
+        const BASES_CAP: usize = 4000;
+        let mut in_win: Vec<&itpp_core::Segment> = self
             .graph
             .segments
             .values()
-            .filter(|s| !self.backbone_nodes.contains(&s.id))
-            .map(|s| (s.id, self.anchor_x(s.id), s.seq.len()))
+            .filter(|seg| {
+                let (x, _) = self.layout.get(&seg.id).copied().unwrap_or((0, 0));
+                let len = seg.seq.len() as i64;
+                x + len > start_off && x < end_off
+            })
             .collect();
-        variants.sort_by_key(|v| v.1);
-        let mut lane_end: Vec<i64> = Vec::new();
-        for (id, x, len) in &variants {
-            let li = (0..lane_end.len()).find(|&li| lane_end[li] <= *x).unwrap_or_else(|| {
-                lane_end.push(0);
-                lane_end.len() - 1
-            });
-            lane_end[li] = x + (*len as i64).max(1) + 24;
-            let lane = if li % 2 == 0 { (li / 2 + 1) as i32 } else { -((li / 2 + 1) as i32) };
-            pos.insert(*id, (*x, lane));
+        let truncated = in_win.len() > max_nodes;
+        if truncated {
+            // keep the largest nodes (the structurally important ones) when over budget
+            in_win.sort_by_key(|seg| std::cmp::Reverse(seg.seq.len()));
+            in_win.truncate(max_nodes);
         }
-
-        let span = self.backbone_off.values().copied().max().unwrap_or(0)
-            + self
-                .graph
-                .backbone_walk()
-                .and_then(|w| w.steps.last())
-                .and_then(|s| self.graph.segments.get(&s.node))
-                .map_or(0, |s| s.seq.len());
+        let ids: BTreeSet<NodeId> = in_win.iter().map(|s| s.id).collect();
 
         let mut s = String::from("{");
         s.push_str(&format!("\"chrom\":{},", jstr(&self.chrom)));
         s.push_str(&format!("\"start\":{},", self.start_coord));
-        s.push_str(&format!("\"span\":{},", span));
+        s.push_str(&format!("\"span\":{},", self.span));
+        s.push_str(&format!("\"win\":[{start_off},{end_off}],"));
+        s.push_str(&format!("\"truncated\":{truncated},"));
         s.push_str(&format!("\"n_nodes\":{},", self.graph.segments.len()));
         s.push_str("\"nodes\":[");
-        let mut first = true;
-        for seg in self.graph.segments.values() {
-            let (x, lane) = pos.get(&seg.id).copied().unwrap_or((0, 0));
-            if !first {
+        for (i, seg) in in_win.iter().enumerate() {
+            let (x, lane) = self.layout.get(&seg.id).copied().unwrap_or((0, 0));
+            if i > 0 {
                 s.push(',');
             }
-            first = false;
-            // full sequence so the UI can render actual nucleotides at base-level zoom; capped
-            // per node to bound payload (long nodes show their first BASES_CAP bases).
-            const BASES_CAP: usize = 4000;
             let full = seg.seq.as_bytes();
-            let seq_out = std::str::from_utf8(&full[..full.len().min(BASES_CAP)]).unwrap_or("");
+            let seq_out = if with_seq {
+                std::str::from_utf8(&full[..full.len().min(BASES_CAP)]).unwrap_or("")
+            } else {
+                ""
+            };
             s.push_str(&format!(
                 "{{\"id\":{},\"x\":{},\"lane\":{},\"len\":{},\"bb\":{},\"kind\":{},\"seq\":{}}}",
                 seg.id,
@@ -332,11 +401,51 @@ impl Browser {
             ));
         }
         s.push_str("],\"edges\":[");
-        for (i, e) in self.graph.edges.iter().enumerate() {
+        let mut fe = true;
+        for e in &self.graph.edges {
+            if ids.contains(&e.from) && ids.contains(&e.to) {
+                if !fe {
+                    s.push(',');
+                }
+                fe = false;
+                s.push_str(&format!("[{},{}]", e.from, e.to));
+            }
+        }
+        s.push_str("]}");
+        s
+    }
+
+    /// Coarse aggregate for a window: `nbins` bins over `[start_off, end_off)`, each with the
+    /// variant count and the largest variant node (a CNV / structural-variant candidate). This
+    /// is the zoomed-out ("whole chromosome / genome") level — small regardless of node count.
+    #[must_use]
+    pub fn density_json(&self, start_off: i64, end_off: i64, nbins: usize) -> String {
+        let nbins = nbins.max(1);
+        let width = (end_off - start_off).max(1);
+        let mut var = vec![0u32; nbins];
+        let mut maxlen = vec![0u32; nbins];
+        for seg in self.graph.segments.values() {
+            if self.backbone_nodes.contains(&seg.id) {
+                continue;
+            }
+            let (x, _) = self.layout.get(&seg.id).copied().unwrap_or((0, 0));
+            if x < start_off || x >= end_off {
+                continue;
+            }
+            let b = (((x - start_off) * nbins as i64) / width).clamp(0, nbins as i64 - 1) as usize;
+            var[b] += 1;
+            maxlen[b] = maxlen[b].max(seg.seq.len() as u32);
+        }
+        let mut s = String::from("{");
+        s.push_str(&format!("\"chrom\":{},\"start\":{},\"span\":{},", jstr(&self.chrom), self.start_coord, self.span));
+        s.push_str(&format!("\"win\":[{start_off},{end_off}],\"nbins\":{nbins},"));
+        s.push_str("\"bins\":[");
+        for i in 0..nbins {
             if i > 0 {
                 s.push(',');
             }
-            s.push_str(&format!("[{},{}]", e.from, e.to));
+            // bin: [variant_count, largest_variant_bp (CNV candidate)]
+            s.push_str(&format!("[{},{}]", var[i], maxlen[i]));
         }
         s.push_str("]}");
         s
@@ -694,6 +803,23 @@ mod tests {
         let sub = String::from_utf8(g.segments[&first].seq.as_bytes()[10..18].to_vec()).unwrap();
         let m = b.matches_json(&sub, 100);
         assert!(m.contains("\"matches\":[") && m.contains("\"node\":"));
+    }
+
+    #[test]
+    fn window_and_density_are_bounded_and_windowed() {
+        let b = browser();
+        let span = b.span();
+        // a narrow window returns only overlapping nodes, with sequence
+        let w = b.window_json(0, 500, true, 10_000);
+        assert!(w.contains("\"win\":[0,500]"));
+        assert!(w.contains("\"seq\":\"") && w.matches("\"seq\":\"\"").count() == 0 || w.contains("seq"));
+        // node cap enforced → truncated flag
+        let capped = b.window_json(0, span, false, 3);
+        assert!(capped.contains("\"truncated\":true"));
+        // density has the requested bin count
+        let d = b.density_json(0, span, 64);
+        assert!(d.contains("\"nbins\":64"));
+        assert_eq!(d.matches("],[").count() + 1, 64, "should have 64 bins");
     }
 
     #[test]

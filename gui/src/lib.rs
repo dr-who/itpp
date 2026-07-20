@@ -47,6 +47,23 @@ impl GenomeBrowser {
         self.inner.overview_json()
     }
 
+    /// Windowed view (a tile): nodes overlapping `[start,end)` bp-offsets, with sequence when
+    /// `with_seq`, capped at `max_nodes`. f64 offsets avoid JS BigInt.
+    pub fn window(&self, start: f64, end: f64, with_seq: bool, max_nodes: usize) -> String {
+        self.inner.window_json(start as i64, end as i64, with_seq, max_nodes)
+    }
+
+    /// Coarse aggregate (a low-zoom tile): `nbins` bins over `[start,end)` with variant count +
+    /// largest-variant (CNV candidate) per bin.
+    pub fn density(&self, start: f64, end: f64, nbins: usize) -> String {
+        self.inner.density_json(start as i64, end as i64, nbins)
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn span(&self) -> f64 {
+        self.inner.span() as f64
+    }
+
     /// Node ids + coords of up to `max` matches, to highlight/zoom-to on the overview.
     pub fn matches(&self, query: &str, max: usize) -> String {
         self.inner.matches_json(query, max)
