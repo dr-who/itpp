@@ -106,84 +106,72 @@ function showTip(e,t){ tip.textContent=t; tip.style.display="block"; tip.style.l
 function hideTip(){ tip.style.display="none"; }
 
 // ---------- overview (whole-region, pan/zoom) ----------
-const LANEH=44, NH=22, PXBP=1;
+// Genome-browser model: the x-axis is zoomed/panned (k = pixels per bp, x0 = bp at left edge);
+// node glyphs keep a fixed readable HEIGHT, so the "world" view is a visible band, not a
+// sub-pixel line. Everything is drawn in screen coordinates and re-rendered on pan/zoom.
+const LANEH=30, NH=20;
 let browser=null, ov=null, sceneG=null, ruleG=null, over=null;
-let view={k:1,tx:0,ty:0}, selected=null, matchSet=new Set();
+let view={k:1,x0:0}, selected=null, matchSet=new Set();
 
-function buildScene(){
+function ovBox(){ const b=ov.getBoundingClientRect(); return {w:b.width||window.innerWidth, h:b.height||360}; }
+function screenX(bp){ return (bp-view.x0)*view.k; }
+function bpAt(px){ return view.x0 + px/view.k; }
+function clampK(k){ const {w}=ovBox(); const fitK=(w)/Math.max(over.span,1); return Math.min(30, Math.max(fitK/3, k)); }
+
+function render(){
+  if(!over) return;
+  const {w:W,h:H}=ovBox(), cy=H/2;
   sceneG.replaceChildren();
-  const cy = ov.clientHeight/2;
-  // edges
+  const showText = view.k>0.5;
+  // edges (cull to viewport)
   for(const [a,b] of over.edges){
     const na=over.map.get(a), nb=over.map.get(b); if(!na||!nb) continue;
-    const x1=(na.x+na.len)*PXBP, y1=cy+na.lane*LANEH+NH/2, x2=nb.x*PXBP, y2=cy+nb.lane*LANEH+NH/2;
-    const mx=(x1+x2)/2;
+    const x1=screenX(na.x+na.len), x2=screenX(nb.x);
+    if((x1<-40&&x2<-40)||(x1>W+40&&x2>W+40)) continue;
+    const y1=cy+na.lane*LANEH+NH/2, y2=cy+nb.lane*LANEH+NH/2, mx=(x1+x2)/2;
     sceneG.appendChild(el(SVGNS,"path",{class:"eg",d:`M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}`}));
   }
   // nodes
   for(const n of over.nodes){
-    const x=n.x*PXBP, y=cy+n.lane*LANEH;
-    const g=el(SVGNS,"g");
-    const r=el(SVGNS,"rect",{class:"nd "+(n.bb?"bb":"va"),x:x,y:y,width:Math.max(n.len*PXBP,1),height:NH,rx:2});
-    r.dataset.id=n.id;
-    if(matchSet.has(n.id)) r.classList.add("match");
-    if(selected===n.id) r.classList.add("sel");
+    const x=screenX(n.x), wd=Math.max(n.len*view.k,1.5);
+    if(x+wd<-2||x>W+2) continue;
+    const y=cy+n.lane*LANEH;
+    let cls="nd "+(n.bb?"bb":"va"); if(matchSet.has(n.id)) cls+=" match"; if(selected===n.id) cls+=" sel";
+    const r=el(SVGNS,"rect",{class:cls,x:x,y:y,width:wd,height:NH,rx:2}); r.dataset.id=n.id;
     r.addEventListener("mousemove",e=>showTip(e,`node ${n.id}${n.bb?" · backbone":" · variant"}\nchr6 ≈ ${(over.start+n.x).toLocaleString()}\nlen ${n.len} bp\n${n.seq}`));
     r.addEventListener("mouseleave",hideTip);
     r.addEventListener("click",ev=>{ ev.stopPropagation(); selectNode(n.id); });
-    g.appendChild(r);
-    const t=el(SVGNS,"text",{x:x+2,y:y+15}); t.textContent=n.seq.slice(0,Math.max(2,Math.round(n.len/2)));
-    g.appendChild(t);
-    sceneG.appendChild(g);
+    sceneG.appendChild(r);
+    if(showText && wd>16){
+      const t=el(SVGNS,"text",{x:x+3,y:y+14,fill:"var(--fg)"}); t.textContent=n.seq.slice(0,Math.max(1,Math.floor(wd/7))); sceneG.appendChild(t);
+    }
   }
+  drawRuler(W);
 }
-function applyView(){
-  sceneG.setAttribute("transform",`translate(${view.tx},${view.ty}) scale(${view.k})`);
-  sceneG.classList.toggle("zoom", view.k>=3);
-  drawRuler();
-}
-function drawRuler(){
+function drawRuler(W){
   ruleG.replaceChildren();
-  const W=ov.clientWidth;
-  const bpPerPx = 1/(view.k*PXBP);
-  const targetTicks=10, rawStep=bpPerPx*(W/targetTicks);
-  const pow=Math.pow(10,Math.floor(Math.log10(rawStep)));
+  const bpPerPx=1/view.k, rawStep=bpPerPx*(W/10);
+  const pow=Math.pow(10,Math.floor(Math.log10(Math.max(rawStep,1))));
   const step=[1,2,5,10].map(m=>m*pow).find(s=>s>=rawStep)||pow;
-  const leftBp = over.start + (-view.tx)/(view.k*PXBP);
-  let first=Math.ceil(leftBp/step)*step;
+  const leftBp=over.start+view.x0;
   ruleG.appendChild(el(SVGNS,"line",{x1:0,y1:22,x2:W,y2:22}));
-  for(let bp=first; ; bp+=step){
-    const sx = view.tx + (bp-over.start)*view.k*PXBP;
-    if(sx>W) break; if(sx<0) continue;
+  for(let bp=Math.ceil(leftBp/step)*step; ; bp+=step){
+    const sx=screenX(bp-over.start); if(sx>W) break; if(sx<0) continue;
     ruleG.appendChild(el(SVGNS,"line",{x1:sx,y1:14,x2:sx,y2:22}));
     const t=el(SVGNS,"text",{x:sx+3,y:12}); t.textContent=Math.round(bp).toLocaleString(); ruleG.appendChild(t);
   }
 }
-function fit(){
-  const W=ov.clientWidth, pad=30;
-  view.k=(W-2*pad)/Math.max(over.span*PXBP,1);
-  view.tx=pad; view.ty=0; applyView();
-}
-function zoomAt(cx,cy,factor){
-  const k2=Math.min(60,Math.max(0.002,view.k*factor));
-  view.tx = cx-(cx-view.tx)*(k2/view.k);
-  view.ty = cy-(cy-view.ty)*(k2/view.k);
-  view.k=k2; applyView();
-}
+function fit(){ const {w}=ovBox(), pad=30; view.k=(w-2*pad)/Math.max(over.span,1); view.x0=-pad/view.k; render(); }
+function zoomAt(px,factor){ const bp=bpAt(px); view.k=clampK(view.k*factor); view.x0=bp-px/view.k; render(); }
 function zoomToNode(id){
-  const n=over.map.get(id); if(!n) return;
-  const W=ov.clientWidth, H=ov.clientHeight;
-  view.k=Math.min(14, Math.max(6, W/ (Math.max(n.len,40)*PXBP*6)));
-  const cx=(n.x+n.len/2)*PXBP, cyScene=H/2+n.lane*LANEH+NH/2;
-  view.tx=W/2-cx*view.k; view.ty=H/2-cyScene*view.k;
-  applyView();
+  const n=over.map.get(id); if(!n) return; const {w}=ovBox();
+  view.k=clampK(Math.max(2, w/Math.max(n.len*8,400)));
+  view.x0=(n.x+n.len/2)-(w/2)/view.k; selected=id; render();
 }
 
 // ---------- detail (local tube-map + protein) ----------
 function selectNode(id){
-  selected=id;
-  document.querySelectorAll("#scene .nd.sel").forEach(r=>r.classList.remove("sel"));
-  const r=document.querySelector(`#scene .nd[data-id="${id}"]`); if(r) r.classList.add("sel");
+  selected=id; render();
   const res=JSON.parse(browser.context(id,0,"+",6,6));
   const d=document.getElementById("detail");
   if(!res.hit){ d.innerHTML=`<div class="empty">node ${id} has no local context</div>`; return; }
@@ -246,12 +234,12 @@ const statusmsg=document.getElementById("statusmsg"), chipsEl=document.getElemen
 function runSearch(){
   const q=document.getElementById("q").value.trim().toUpperCase().replace(/[^ACGTN]/g,"");
   matchSet=new Set(); chipsEl.replaceChildren();
-  if(q.length<2){ statusmsg.textContent="Type ≥2 bases to highlight matches. Scroll=zoom, drag=pan."; buildScene(); applyView(); return; }
+  if(q.length<2){ statusmsg.textContent="Type ≥2 bases to highlight matches. Scroll=zoom, drag=pan."; render(); return; }
   const res=JSON.parse(browser.matches(q,500));
   res.matches.forEach(m=>matchSet.add(m.node));
   statusmsg.textContent=`“${q}” → ${res.n_total} match${res.n_total===1?"":"es"}`+(res.matches.length<res.n_total?` (highlighting first ${res.matches.length})`:"")+(q.length<=4?"  — longer queries are more specific":"");
   res.matches.slice(0,24).forEach(m=>{ const c=document.createElement("span"); c.className="chip"; c.textContent=m.pos; c.title="zoom to "+m.pos; c.onclick=()=>{ zoomToNode(m.node); selectNode(m.node); }; chipsEl.appendChild(c); });
-  buildScene(); applyView();
+  render();
   if(res.matches[0]) zoomToNode(res.matches[0].node);
 }
 
@@ -262,18 +250,18 @@ async function loadContainer(bytes){
   over.map=new Map(over.nodes.map(n=>[n.id,n]));
   document.getElementById("dsmeta").textContent=`${over.chrom}:${over.start.toLocaleString()} · ${over.span.toLocaleString()} bp · ${over.n_nodes} nodes · ${browser.haplotypes} haplotypes`;
   document.getElementById("dataset").innerHTML=`<option>${browser.region}</option>`;
-  buildScene(); fit();
+  fit();
 }
 function setupInteractions(){
   let drag=null;
-  ov.addEventListener("wheel",e=>{ e.preventDefault(); const r=ov.getBoundingClientRect(); zoomAt(e.clientX-r.left,e.clientY-r.top, e.deltaY<0?1.15:1/1.15); },{passive:false});
-  ov.addEventListener("mousedown",e=>{ drag={x:e.clientX,y:e.clientY,tx:view.tx,ty:view.ty}; ov.classList.add("drag"); });
-  window.addEventListener("mousemove",e=>{ if(!drag)return; view.tx=drag.tx+(e.clientX-drag.x); view.ty=drag.ty+(e.clientY-drag.y); applyView(); });
+  ov.addEventListener("wheel",e=>{ e.preventDefault(); const r=ov.getBoundingClientRect(); zoomAt(e.clientX-r.left, e.deltaY<0?1.18:1/1.18); },{passive:false});
+  ov.addEventListener("mousedown",e=>{ drag={x:e.clientX,x0:view.x0}; ov.classList.add("drag"); });
+  window.addEventListener("mousemove",e=>{ if(!drag)return; view.x0=drag.x0-(e.clientX-drag.x)/view.k; render(); });
   window.addEventListener("mouseup",()=>{ drag=null; ov.classList.remove("drag"); });
-  window.addEventListener("resize",()=>{ buildScene(); applyView(); });
-  const r=()=>{ const b=ov.getBoundingClientRect(); return {cx:b.width/2,cy:b.height/2}; };
-  document.getElementById("zin").onclick=()=>{ const c=r(); zoomAt(c.cx,c.cy,1.4); };
-  document.getElementById("zout").onclick=()=>{ const c=r(); zoomAt(c.cx,c.cy,1/1.4); };
+  window.addEventListener("resize",render);
+  const cx=()=>ov.getBoundingClientRect().width/2;
+  document.getElementById("zin").onclick=()=>zoomAt(cx(),1.5);
+  document.getElementById("zout").onclick=()=>zoomAt(cx(),1/1.5);
   document.getElementById("zfit").onclick=fit;
   document.getElementById("view3d").onclick=()=>{ statusmsg.textContent="3D view is planned — the 2D fly-over is live."; };
   let t=null; document.getElementById("q").addEventListener("input",()=>{ clearTimeout(t); t=setTimeout(runSearch,140); });
@@ -283,6 +271,7 @@ ov=document.getElementById("ov"); sceneG=document.getElementById("scene"); ruleG
 wasm_bindgen(b64ToBytes(WASM_B64).buffer).then(async ()=>{
   await loadContainer(b64ToBytes(CONTAINER_B64));
   setupInteractions();
+  requestAnimationFrame(fit); // ensure layout is measured before first fit
   document.getElementById("q").focus();
 }).catch(err=>{ statusmsg.textContent="failed to initialise WASM: "+err; });
 </script>
