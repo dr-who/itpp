@@ -316,12 +316,13 @@ impl Browser {
             }
             first = false;
             s.push_str(&format!(
-                "{{\"id\":{},\"x\":{},\"lane\":{},\"len\":{},\"bb\":{},\"seq\":{}}}",
+                "{{\"id\":{},\"x\":{},\"lane\":{},\"len\":{},\"bb\":{},\"kind\":{},\"seq\":{}}}",
                 seg.id,
                 x,
                 lane,
                 seg.seq.len(),
                 self.backbone_nodes.contains(&seg.id),
+                jstr(self.node_kind(seg.id, seg.seq.as_bytes())),
                 jstr(&preview(seg.seq.as_bytes()))
             ));
         }
@@ -334,6 +335,24 @@ impl Browser {
         }
         s.push_str("]}");
         s
+    }
+
+    /// Coarse node type for colouring, computed from our own code (no RepeatMasker yet):
+    /// backbone spine, tandem / low-complexity repeat, large interspersed-repeat or SV
+    /// candidate (Alu-sized and up), indel, or SNP. Biological family calls (Alu/LINE/…)
+    /// come later from the annotation layer.
+    fn node_kind(&self, id: NodeId, seq: &[u8]) -> &'static str {
+        if self.backbone_nodes.contains(&id) {
+            return "backbone";
+        }
+        if is_tandem(seq) {
+            return "tandem";
+        }
+        match seq.len() {
+            n if n >= 250 => "large",
+            n if n <= 4 => "snp",
+            _ => "indel",
+        }
     }
 
     /// x (bp offset) of the nearest backbone anchor to a variant node.
@@ -543,6 +562,25 @@ fn count_sub(hay: &[u8], needle: &[u8]) -> usize {
         return 0;
     }
     hay.windows(needle.len()).filter(|w| *w == needle).count()
+}
+
+/// True if the sequence is mostly periodic with a short period (homopolymer, di-/tri-…nucleotide
+/// tandem repeat, low-complexity) — i.e. satellite-like repetition, detected without a library.
+fn is_tandem(seq: &[u8]) -> bool {
+    let n = seq.len();
+    if n < 6 {
+        return false;
+    }
+    for period in 1..=6usize {
+        if n < period * 4 {
+            break;
+        }
+        let matches = (period..n).filter(|&i| seq[i] == seq[i - period]).count();
+        if matches as f64 / (n - period) as f64 > 0.82 {
+            return true;
+        }
+    }
+    false
 }
 
 fn preview(seq: &[u8]) -> String {

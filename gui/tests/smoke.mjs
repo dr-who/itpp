@@ -60,6 +60,8 @@ ok(ov.chrom === "chr6" && ov.start === 31825251, `overview coords ${ov.chrom}:${
 ok(ov.span > 80000, `span ${ov.span} bp`);
 ok(ov.nodes.some((n) => n.bb) && ov.nodes.some((n) => !n.bb), "overview has backbone + variant nodes");
 ok(ov.nodes.every((n) => typeof n.x === "number" && typeof n.lane === "number"), "every node has x + lane");
+ok(ov.nodes.every((n) => typeof n.kind === "string"), "every node has a type/kind for colouring");
+ok(new Set(ov.nodes.map((n) => n.kind)).size >= 2, "at least two node types present");
 ok(Array.isArray(ov.edges) && ov.edges.length > 0, `overview has ${ov.edges.length} edges`);
 
 // Matches: node ids to highlight/zoom-to.

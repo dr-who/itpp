@@ -35,10 +35,13 @@
   #ov.drag { cursor:grabbing; }
   .rule line { stroke:var(--line); } .rule text { fill:var(--dim); font:11px ui-monospace,monospace; }
   .nd { stroke-width:0.6px; }
-  .nd.bb { fill:#1b3a63; stroke:var(--backbone); }
-  .nd.va { fill:#33204d; stroke:var(--variant); }
+  .nd.backbone { fill:#1b3a63; stroke:var(--backbone); }
+  .nd.snp   { fill:#33204d; stroke:#a855f7; }
+  .nd.indel { fill:#3a2140; stroke:#d16ba5; }
+  .nd.tandem{ fill:#14402c; stroke:#2ea043; }
+  .nd.large { fill:#4a2410; stroke:#e3873b; }
   .nd.match { fill:var(--hit); stroke:#fff; stroke-width:1px; }
-  .nd.sel { stroke:#fff; stroke-width:1.4px; }
+  .nd.sel { stroke:#fff; stroke-width:1.6px; }
   .eg { fill:none; stroke:var(--edge); stroke-width:0.5px; opacity:.5; }
   #scene text { fill:var(--fg); font:10px ui-monospace,monospace; display:none; }
   #scene.zoom text { display:block; }
@@ -69,7 +72,10 @@
   <div><h1>ITPP genome browser</h1><div class="meta" id="dsmeta">loading…</div></div>
   <div class="controls">
     <span class="legend"><span><b style="background:#1b3a63;border:1px solid var(--backbone)"></b>backbone</span>
-      <span><b style="background:#33204d;border:1px solid var(--variant)"></b>variant</span>
+      <span><b style="background:#33204d;border:1px solid #a855f7"></b>SNP</span>
+      <span><b style="background:#3a2140;border:1px solid #d16ba5"></b>indel</span>
+      <span><b style="background:#14402c;border:1px solid #2ea043"></b>tandem</span>
+      <span><b style="background:#4a2410;border:1px solid #e3873b"></b>large/repeat</span>
       <span><b style="background:var(--hit)"></b>match</span></span>
     <select id="dataset" title="region"></select>
     <input id="q" placeholder="type ATCG…" autocomplete="off" spellcheck="false" />
@@ -136,7 +142,7 @@ function render(){
     const x=screenX(n.x), wd=Math.max(n.len*view.k,1.5);
     if(x+wd<-2||x>W+2) continue;
     const y=cy+n.lane*LANEH;
-    let cls="nd "+(n.bb?"bb":"va"); if(matchSet.has(n.id)) cls+=" match"; if(selected===n.id) cls+=" sel";
+    let cls="nd "+(n.kind||(n.bb?"backbone":"snp")); if(matchSet.has(n.id)) cls+=" match"; if(selected===n.id) cls+=" sel";
     const r=el(SVGNS,"rect",{class:cls,x:x,y:y,width:wd,height:NH,rx:2}); r.dataset.id=n.id;
     r.addEventListener("mousemove",e=>showTip(e,`node ${n.id}${n.bb?" · backbone":" · variant"}\nchr6 ≈ ${(over.start+n.x).toLocaleString()}\nlen ${n.len} bp\n${n.seq}`));
     r.addEventListener("mouseleave",hideTip);
