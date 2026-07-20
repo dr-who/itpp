@@ -31,6 +31,11 @@ impl Interner {
 pub fn parse(text: &str) -> Graph {
     let mut g = Graph::new();
     let mut interner = Interner::default();
+    // rGFA (minigraph) reference tags: node -> (rank, offset, contig). rank 0 = the reference
+    // spine. When a graph has no P/W lines (as minigraph output), we synthesize the backbone
+    // walk from the rank-0 segments in offset order.
+    let mut rgfa: Vec<(NodeId, i64, String)> = Vec::new();
+    let mut has_walk = false;
 
     for line in text.lines() {
         if line.is_empty() {
@@ -41,6 +46,11 @@ pub fn parse(text: &str) -> Graph {
             "S" if f.len() >= 3 => {
                 let id = interner.intern(f[1]);
                 g.add_segment(id, Sequence::from_str(f[2]));
+                if let Some((rank, off, sn)) = parse_rgfa_tags(&f[3..]) {
+                    if rank == 0 {
+                        rgfa.push((id, off, sn));
+                    }
+                }
             }
             "L" if f.len() >= 5 => {
                 if let (Some(fs), Some(ts)) =
@@ -54,19 +64,47 @@ pub fn parse(text: &str) -> Graph {
             "P" if f.len() >= 3 => {
                 let steps = parse_path_steps(f[2], &mut interner);
                 g.add_walk(Walk { name: f[1].to_string(), steps });
+                has_walk = true;
             }
             "W" if f.len() >= 7 => {
                 // W  sample  hap  seqid  start  end  walk
                 let name = format!("{}#{}#{}", f[1], f[2], f[3]);
                 let steps = parse_walk_steps(f[6], &mut interner);
                 g.add_walk(Walk { name, steps });
+                has_walk = true;
             }
             _ => {}
         }
     }
 
+    // minigraph rGFA has no P/W lines: build the backbone spine from rank-0 segments.
+    if !has_walk && !rgfa.is_empty() {
+        rgfa.sort_by_key(|(_, off, _)| *off);
+        let name = rgfa.first().map(|(_, _, sn)| sn.clone()).unwrap_or_else(|| "reference".into());
+        let steps: Vec<Step> =
+            rgfa.iter().map(|(id, _, _)| Step { node: *id, strand: Strand::Forward }).collect();
+        g.add_walk(Walk { name: format!("{name}#0#ref"), steps });
+    }
+
     g.backbone = pick_backbone(&g);
     g
+}
+
+/// Extract `(SR rank, SO offset, SN contig)` from rGFA optional tag fields, if present.
+fn parse_rgfa_tags(tags: &[&str]) -> Option<(i32, i64, String)> {
+    let mut sr = None;
+    let mut so = None;
+    let mut sn = String::new();
+    for t in tags {
+        if let Some(v) = t.strip_prefix("SR:i:") {
+            sr = v.parse().ok();
+        } else if let Some(v) = t.strip_prefix("SO:i:") {
+            so = v.parse().ok();
+        } else if let Some(v) = t.strip_prefix("SN:Z:") {
+            sn = v.to_string();
+        }
+    }
+    Some((sr?, so?, sn))
 }
 
 fn sign(s: &str) -> char {
@@ -178,6 +216,24 @@ mod tests {
         assert_eq!(g.segments.len(), g2.segments.len());
         assert_eq!(g.walks.len(), g2.walks.len());
         assert_eq!(g.spell(bb).unwrap(), g2.spell(g2.backbone_walk().unwrap()).unwrap());
+    }
+
+    #[test]
+    fn parse_rgfa_synthesizes_backbone() {
+        // minigraph-style rGFA: no P/W lines, reference marked by SR:i:0 + SO offsets.
+        let text = "S\ts1\tACGT\tLN:i:4\tSN:Z:chr6_alt\tSO:i:0\tSR:i:0\n\
+                    S\ts2\tGGGG\tLN:i:4\tSN:Z:chr6_alt\tSO:i:4\tSR:i:0\n\
+                    S\ts3\tTT\tLN:i:2\tSR:i:1\n\
+                    L\ts1\t+\ts2\t+\t0M\n\
+                    L\ts1\t+\ts3\t+\t0M\n";
+        let g = parse(text);
+        assert_eq!(g.segments.len(), 3);
+        assert_eq!(g.walks.len(), 1, "backbone synthesized from rank-0 segments");
+        let bb = g.backbone_walk().unwrap();
+        assert_eq!(bb.steps.len(), 2, "only rank-0 segments on the spine");
+        // spelled in SO order: s1 then s2
+        assert_eq!(g.spell(bb).unwrap().as_bytes(), b"ACGTGGGG");
+        assert!(g.backbone.as_deref().unwrap().contains("chr6_alt"));
     }
 
     #[test]
