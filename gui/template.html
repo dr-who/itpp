@@ -6,76 +6,87 @@
 <meta name="color-scheme" content="dark" />
 <title>ITPP genome browser</title>
 <style>
-  :root { color-scheme: dark; }
-  :root {
+  :root { color-scheme: dark;
     --bg:#0d1117; --panel:#161b22; --line:#30363d; --fg:#e6edf3; --dim:#8b949e;
-    --backbone:#3b82f6; --variant:#a855f7; --hit:#e3b341; --edge:#6e7681;
-    --aa:#2ea043;
-  }
+    --backbone:#3b82f6; --variant:#a855f7; --hit:#e3b341; --edge:#6e7681; --aa:#2ea043; }
   * { box-sizing:border-box; }
-  body { margin:0; background:var(--bg); color:var(--fg);
+  html,body { height:100%; margin:0; }
+  body { background:var(--bg); color:var(--fg); display:flex; flex-direction:column;
     font:14px/1.5 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; }
-  header { padding:14px 20px; border-bottom:1px solid var(--line); background:var(--panel);
-    display:flex; gap:16px; align-items:center; flex-wrap:wrap; position:sticky; top:0; z-index:5; }
-  header h1 { font-size:16px; margin:0; font-weight:650; letter-spacing:.2px; }
-  header .meta { color:var(--dim); font-size:12px; }
-  .controls { display:flex; gap:10px; align-items:center; margin-left:auto; flex-wrap:wrap; }
+  header { padding:12px 18px; border-bottom:1px solid var(--line); background:var(--panel);
+    display:flex; gap:14px; align-items:center; flex-wrap:wrap; }
+  header h1 { font-size:15px; margin:0; font-weight:650; }
+  .meta { color:var(--dim); font-size:12px; }
+  .controls { display:flex; gap:8px; align-items:center; margin-left:auto; flex-wrap:wrap; }
   select, input, button { background:#0d1117; color:var(--fg); border:1px solid var(--line);
-    border-radius:6px; padding:7px 10px; font-size:14px; }
-  input#q { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; letter-spacing:2px;
-    text-transform:uppercase; width:220px; }
-  button { cursor:pointer; }
-  button.toggle[aria-pressed=true] { border-color:var(--backbone); color:var(--backbone); }
-  #status { padding:8px 20px; color:var(--dim); font-size:13px; border-bottom:1px solid var(--line); }
-  #results { padding:8px 12px; }
-  .hit { border:1px solid var(--line); border-radius:10px; margin:12px 4px; background:var(--panel);
-    overflow:hidden; }
-  .hit .bar { display:flex; gap:14px; align-items:center; padding:8px 14px;
-    border-bottom:1px solid var(--line); flex-wrap:wrap; }
-  .hit .bar .coord { font-family:ui-monospace,monospace; color:var(--hit); font-weight:600; }
-  .hit .bar .tag { font-size:12px; color:var(--dim); }
-  .hit .bar .strand { border:1px solid var(--line); border-radius:4px; padding:1px 6px; font-size:12px; }
-  .tube { width:100%; overflow-x:auto; }
-  svg { display:block; }
-  .node rect { stroke-width:1.5; cursor:pointer; }
-  .node text { font-family:ui-monospace,monospace; font-size:11px; pointer-events:none; fill:var(--fg); }
+    border-radius:6px; padding:6px 9px; font-size:14px; }
+  input#q { font-family:ui-monospace,Menlo,monospace; letter-spacing:2px; text-transform:uppercase; width:210px; }
+  button { cursor:pointer; } button:hover { border-color:var(--fg); }
+  .legend { display:flex; gap:12px; font-size:12px; color:var(--dim); align-items:center; }
+  .legend b { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:4px; vertical-align:middle; }
+  #status { padding:6px 18px; color:var(--dim); font-size:13px; border-bottom:1px solid var(--line);
+    display:flex; gap:14px; align-items:center; flex-wrap:wrap; }
+  #chips { display:flex; gap:6px; flex-wrap:wrap; }
+  .chip { background:#1c2333; border:1px solid var(--line); border-radius:12px; padding:1px 9px;
+    font-size:12px; cursor:pointer; color:var(--hit); font-family:ui-monospace,monospace; }
+  .chip:hover { border-color:var(--hit); }
+  #overview { flex:1 1 auto; position:relative; overflow:hidden; min-height:280px; background:#0b0f16; }
+  #ov { width:100%; height:100%; display:block; cursor:grab; }
+  #ov.drag { cursor:grabbing; }
+  .rule line { stroke:var(--line); } .rule text { fill:var(--dim); font:11px ui-monospace,monospace; }
+  .nd { stroke-width:0.6px; }
+  .nd.bb { fill:#1b3a63; stroke:var(--backbone); }
+  .nd.va { fill:#33204d; stroke:var(--variant); }
+  .nd.match { fill:var(--hit); stroke:#fff; stroke-width:1px; }
+  .nd.sel { stroke:#fff; stroke-width:1.4px; }
+  .eg { fill:none; stroke:var(--edge); stroke-width:0.5px; opacity:.5; }
+  #scene text { fill:var(--fg); font:10px ui-monospace,monospace; display:none; }
+  #scene.zoom text { display:block; }
+  .zoomctl { position:absolute; right:12px; bottom:12px; display:flex; flex-direction:column; gap:6px; }
+  .zoomctl button { width:34px; height:34px; font-size:17px; padding:0; }
+  #detail { flex:0 0 auto; max-height:44%; overflow:auto; border-top:1px solid var(--line); background:var(--panel); }
+  #detail .empty { color:var(--dim); padding:16px; }
+  .bar { display:flex; gap:12px; align-items:center; padding:8px 14px; border-bottom:1px solid var(--line); flex-wrap:wrap; }
+  .bar .coord { font-family:ui-monospace,monospace; color:var(--hit); font-weight:600; }
+  .bar .tag { font-size:12px; color:var(--dim); }
+  .bar .strand { border:1px solid var(--line); border-radius:4px; padding:1px 6px; font-size:12px; }
+  .tube { overflow-x:auto; padding:4px 8px; }
+  .node rect { stroke-width:1.5; cursor:default; } .node text { font:11px ui-monospace,monospace; fill:var(--fg); pointer-events:none; }
   svg text { fill:var(--fg); }
   .node.backbone rect { fill:#132a4d; stroke:var(--backbone); }
-  .node.variant  rect { fill:#241436; stroke:var(--variant); }
-  .node.hit      rect { fill:#3a2f0a; stroke:var(--hit); stroke-width:2.5; }
+  .node.variant rect { fill:#241436; stroke:var(--variant); }
+  .node.hit rect { fill:#3a2f0a; stroke:var(--hit); stroke-width:2.5; }
   .edge { fill:none; stroke:var(--edge); stroke-width:1.5; }
-  .collapse { cursor:pointer; }
-  .collapse text { font-size:11px; fill:var(--variant); font-family:ui-monospace,monospace; }
-  .codons { padding:10px 14px; overflow-x:auto; }
-  .codons table { border-collapse:collapse; font-family:ui-monospace,monospace; }
+  .codons { padding:8px 14px; overflow-x:auto; } .codons table { border-collapse:collapse; font-family:ui-monospace,monospace; }
   .codons td { padding:2px 7px; text-align:center; border:1px solid var(--line); }
-  .codons tr.mer td { color:var(--fg); }
-  .codons tr.aa td { color:var(--aa); font-weight:700; }
-  .codons .lbl { color:var(--dim); text-align:right; border:none; }
+  .codons tr.aa td { color:var(--aa); font-weight:700; } .codons .lbl { color:var(--dim); text-align:right; border:none; }
   #tooltip { position:fixed; pointer-events:none; background:#000d; color:#fff; border:1px solid var(--line);
-    border-radius:6px; padding:6px 9px; font:12px/1.4 ui-monospace,monospace; z-index:20; display:none; max-width:320px; }
-  .empty { color:var(--dim); padding:24px; text-align:center; }
-  .legend { display:flex; gap:14px; font-size:12px; color:var(--dim); align-items:center; }
-  .legend b { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:4px; vertical-align:middle; }
+    border-radius:6px; padding:6px 9px; font:12px/1.4 ui-monospace,monospace; z-index:20; display:none; max-width:340px; }
 </style>
 </head>
 <body>
 <header>
-  <div>
-    <h1>ITPP genome browser</h1>
-    <div class="meta" id="dsmeta">loading…</div>
-  </div>
+  <div><h1>ITPP genome browser</h1><div class="meta" id="dsmeta">loading…</div></div>
   <div class="controls">
-    <label class="legend"><span><b style="background:#132a4d;border:1px solid var(--backbone)"></b>backbone</span>
-      <span><b style="background:#241436;border:1px solid var(--variant)"></b>variant</span>
-      <span><b style="background:#3a2f0a;border:1px solid var(--hit)"></b>match</span></label>
-    <select id="dataset" title="dataset / region"></select>
+    <span class="legend"><span><b style="background:#1b3a63;border:1px solid var(--backbone)"></b>backbone</span>
+      <span><b style="background:#33204d;border:1px solid var(--variant)"></b>variant</span>
+      <span><b style="background:var(--hit)"></b>match</span></span>
+    <select id="dataset" title="region"></select>
     <input id="q" placeholder="type ATCG…" autocomplete="off" spellcheck="false" />
-    <button id="view3d" class="toggle" aria-pressed="false" title="3D view (coming)">3D</button>
+    <button id="view3d" title="3D view (planned)">3D</button>
   </div>
 </header>
-<div id="status">Type a nucleotide query (A/C/G/T) to search the pangenome. Each match is a row; hover a node for its coordinate.</div>
-<div id="results"><div class="empty">— no query yet —</div></div>
+<div id="status"><span id="statusmsg">Fly over the whole region — scroll to zoom, drag to pan. Type a sequence to highlight matches, then click a node to inspect it.</span><span id="chips"></span></div>
+
+<div id="overview">
+  <svg id="ov"><g id="rule" class="rule"></g><g id="scene"></g></svg>
+  <div class="zoomctl">
+    <button id="zin" title="zoom in">+</button>
+    <button id="zout" title="zoom out">−</button>
+    <button id="zfit" title="fit whole region" style="font-size:12px">fit</button>
+  </div>
+</div>
+<div id="detail"><div class="empty">— click a node in the overview to inspect its local graph, codons and protein —</div></div>
 <div id="tooltip"></div>
 
 <script>/*__GLUE__*/</script>
@@ -84,250 +95,196 @@
 const WASM_B64 = "__WASM_B64__";
 const CONTAINER_B64 = "__CONTAINER_B64__";
 const GITHUB_RAW = "https://raw.githubusercontent.com/dr-who/itpp/main/database/"; // our project only
+const SVGNS = "http://www.w3.org/2000/svg";
 
-function b64ToBytes(b64) {
-  const bin = atob(b64);
-  const out = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-  return out;
+function b64ToBytes(b64){ const s=atob(b64), a=new Uint8Array(s.length); for(let i=0;i<s.length;i++)a[i]=s.charCodeAt(i); return a; }
+function el(ns,name,attrs){ const e=document.createElementNS(ns,name); for(const k in (attrs||{})) e.setAttribute(k,attrs[k]); return e; }
+function mkTitle(t){ const x=el(SVGNS,"title"); x.textContent=t; return x; }
+
+const tip=document.getElementById("tooltip");
+function showTip(e,t){ tip.textContent=t; tip.style.display="block"; tip.style.left=(e.clientX+14)+"px"; tip.style.top=(e.clientY+14)+"px"; }
+function hideTip(){ tip.style.display="none"; }
+
+// ---------- overview (whole-region, pan/zoom) ----------
+const LANEH=44, NH=22, PXBP=1;
+let browser=null, ov=null, sceneG=null, ruleG=null, over=null;
+let view={k:1,tx:0,ty:0}, selected=null, matchSet=new Set();
+
+function buildScene(){
+  sceneG.replaceChildren();
+  const cy = ov.clientHeight/2;
+  // edges
+  for(const [a,b] of over.edges){
+    const na=over.map.get(a), nb=over.map.get(b); if(!na||!nb) continue;
+    const x1=(na.x+na.len)*PXBP, y1=cy+na.lane*LANEH+NH/2, x2=nb.x*PXBP, y2=cy+nb.lane*LANEH+NH/2;
+    const mx=(x1+x2)/2;
+    sceneG.appendChild(el(SVGNS,"path",{class:"eg",d:`M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}`}));
+  }
+  // nodes
+  for(const n of over.nodes){
+    const x=n.x*PXBP, y=cy+n.lane*LANEH;
+    const g=el(SVGNS,"g");
+    const r=el(SVGNS,"rect",{class:"nd "+(n.bb?"bb":"va"),x:x,y:y,width:Math.max(n.len*PXBP,1),height:NH,rx:2});
+    r.dataset.id=n.id;
+    if(matchSet.has(n.id)) r.classList.add("match");
+    if(selected===n.id) r.classList.add("sel");
+    r.addEventListener("mousemove",e=>showTip(e,`node ${n.id}${n.bb?" · backbone":" · variant"}\nchr6 ≈ ${(over.start+n.x).toLocaleString()}\nlen ${n.len} bp\n${n.seq}`));
+    r.addEventListener("mouseleave",hideTip);
+    r.addEventListener("click",ev=>{ ev.stopPropagation(); selectNode(n.id); });
+    g.appendChild(r);
+    const t=el(SVGNS,"text",{x:x+2,y:y+15}); t.textContent=n.seq.slice(0,Math.max(2,Math.round(n.len/2)));
+    g.appendChild(t);
+    sceneG.appendChild(g);
+  }
+}
+function applyView(){
+  sceneG.setAttribute("transform",`translate(${view.tx},${view.ty}) scale(${view.k})`);
+  sceneG.classList.toggle("zoom", view.k>=3);
+  drawRuler();
+}
+function drawRuler(){
+  ruleG.replaceChildren();
+  const W=ov.clientWidth;
+  const bpPerPx = 1/(view.k*PXBP);
+  const targetTicks=10, rawStep=bpPerPx*(W/targetTicks);
+  const pow=Math.pow(10,Math.floor(Math.log10(rawStep)));
+  const step=[1,2,5,10].map(m=>m*pow).find(s=>s>=rawStep)||pow;
+  const leftBp = over.start + (-view.tx)/(view.k*PXBP);
+  let first=Math.ceil(leftBp/step)*step;
+  ruleG.appendChild(el(SVGNS,"line",{x1:0,y1:22,x2:W,y2:22}));
+  for(let bp=first; ; bp+=step){
+    const sx = view.tx + (bp-over.start)*view.k*PXBP;
+    if(sx>W) break; if(sx<0) continue;
+    ruleG.appendChild(el(SVGNS,"line",{x1:sx,y1:14,x2:sx,y2:22}));
+    const t=el(SVGNS,"text",{x:sx+3,y:12}); t.textContent=Math.round(bp).toLocaleString(); ruleG.appendChild(t);
+  }
+}
+function fit(){
+  const W=ov.clientWidth, pad=30;
+  view.k=(W-2*pad)/Math.max(over.span*PXBP,1);
+  view.tx=pad; view.ty=0; applyView();
+}
+function zoomAt(cx,cy,factor){
+  const k2=Math.min(60,Math.max(0.002,view.k*factor));
+  view.tx = cx-(cx-view.tx)*(k2/view.k);
+  view.ty = cy-(cy-view.ty)*(k2/view.k);
+  view.k=k2; applyView();
+}
+function zoomToNode(id){
+  const n=over.map.get(id); if(!n) return;
+  const W=ov.clientWidth, H=ov.clientHeight;
+  view.k=Math.min(14, Math.max(6, W/ (Math.max(n.len,40)*PXBP*6)));
+  const cx=(n.x+n.len/2)*PXBP, cyScene=H/2+n.lane*LANEH+NH/2;
+  view.tx=W/2-cx*view.k; view.ty=H/2-cyScene*view.k;
+  applyView();
 }
 
-// ---- rendering ----
-const COLW = 150, LANEH = 56, NW = 108, NH = 32;
-const collapsed = new Map(); // key `${hitIdx}:${x}` -> true
-
-function nodeClass(n) { return n.hit ? "hit" : (n.backbone ? "backbone" : "variant"); }
-function mkTitle(text) {
-  const t = document.createElementNS("http://www.w3.org/2000/svg", "title");
-  t.textContent = text; return t;
+// ---------- detail (local tube-map + protein) ----------
+function selectNode(id){
+  selected=id;
+  document.querySelectorAll("#scene .nd.sel").forEach(r=>r.classList.remove("sel"));
+  const r=document.querySelector(`#scene .nd[data-id="${id}"]`); if(r) r.classList.add("sel");
+  const res=JSON.parse(browser.context(id,0,"+",6,6));
+  const d=document.getElementById("detail");
+  if(!res.hit){ d.innerHTML=`<div class="empty">node ${id} has no local context</div>`; return; }
+  d.replaceChildren(renderDetail(res.hit));
 }
-
-function renderHit(hit, idx) {
-  const wrap = document.createElement("div");
-  wrap.className = "hit";
-
-  // per-row context state so ◀/▶ can widen the window as far as the user wants
-  const st = { node: hit.node, offset: hit.offset, strand: hit.strand, left: 8, right: 8, hit };
-
-  const bar = document.createElement("div");
-  bar.className = "bar";
-  bar.innerHTML =
-    `<span class="coord">${hit.pos}</span>` +
-    `<span class="strand">${hit.strand}</span>` +
-    `<span class="tag">node ${hit.node} · ${hit.n_haplotypes} haplotypes</span>` +
-    `<span class="tag">protein: <b style="color:var(--aa)">${hit.protein || "—"}</b></span>`;
-  const ext = document.createElement("span");
-  ext.style.marginLeft = "auto";
-  const bL = document.createElement("button"); bL.textContent = "◀ extend";
-  const bR = document.createElement("button"); bR.textContent = "extend ▶";
-  const bAll = document.createElement("button"); bAll.textContent = "◀▶ wide";
-  ext.append(bL, " ", bR, " ", bAll);
-  bar.appendChild(ext);
+function nodeClass(n){ return n.hit?"hit":(n.backbone?"backbone":"variant"); }
+function renderDetail(hit){
+  const wrap=document.createElement("div");
+  const bar=document.createElement("div"); bar.className="bar";
+  bar.innerHTML=`<span class="coord">${hit.pos}</span><span class="strand">${hit.strand}</span>`+
+    `<span class="tag">node ${hit.node} · ${hit.n_haplotypes} haplotypes</span>`+
+    `<span class="tag">protein: <b style="color:var(--aa)">${hit.protein||"—"}</b></span>`;
   wrap.appendChild(bar);
-
-  const tube = document.createElement("div");
-  tube.className = "tube";
-  const codons = document.createElement("div");
-  codons.className = "codons";
-
-  function redraw() {
-    tube.replaceChildren(renderTube(st.hit, idx));
-    codons.replaceChildren(...renderCodons(st.hit).childNodes);
-  }
-  function extend(dl, dr) {
-    st.left += dl; st.right += dr;
-    const res = JSON.parse(browser.context(st.node, st.offset, st.strand, st.left, st.right));
-    if (res.hit) { st.hit = res.hit; redraw(); }
-  }
-  bL.onclick = () => extend(6, 0);
-  bR.onclick = () => extend(0, 6);
-  bAll.onclick = () => extend(10, 10);
-
-  tube.appendChild(renderTube(hit, idx));
-  wrap.appendChild(tube);
-  codons.replaceChildren(...renderCodons(hit).childNodes);
-  wrap.appendChild(codons);
+  const tube=document.createElement("div"); tube.className="tube"; tube.appendChild(renderTube(hit)); wrap.appendChild(tube);
+  wrap.appendChild(renderCodons(hit));
   return wrap;
 }
-
-function renderTube(hit, idx) {
-  const nodes = hit.nodes;
-  const xs = nodes.map(n => n.x);
-  const minX = Math.min(...xs), maxX = Math.max(...xs);
-  const lanes = nodes.map(n => n.lane);
-  const minL = Math.min(0, ...lanes), maxL = Math.max(0, ...lanes);
-  const W = (maxX - minX) * COLW + NW + 60;
-  const H = (maxL - minL) * LANEH + NH + 40;
-  const cy = 20 - minL * LANEH;
-
-  const SVG = "http://www.w3.org/2000/svg";
-  const svg = document.createElementNS(SVG, "svg");
-  svg.setAttribute("width", W); svg.setAttribute("height", H);
-  // arrowhead markers (edges are directed: they show the order haplotypes traverse them)
-  const defs = document.createElementNS(SVG, "defs");
-  for (const [id, col] of [["ah", "var(--edge)"], ["ah2", "#e3873b"]]) {
-    const m = document.createElementNS(SVG, "marker");
-    m.setAttribute("id", id); m.setAttribute("markerWidth", "7"); m.setAttribute("markerHeight", "7");
-    m.setAttribute("refX", "6"); m.setAttribute("refY", "3"); m.setAttribute("orient", "auto");
-    const mp = document.createElementNS(SVG, "path");
-    mp.setAttribute("d", "M0,0 L6,3 L0,6 Z"); mp.setAttribute("fill", col);
-    m.appendChild(mp); defs.appendChild(m);
+function renderTube(hit){
+  const nodes=hit.nodes, COLW=150, LH=56, NW=108, NHt=32;
+  const xs=nodes.map(n=>n.x), minX=Math.min(...xs),maxX=Math.max(...xs);
+  const lanes=nodes.map(n=>n.lane), minL=Math.min(0,...lanes),maxL=Math.max(0,...lanes);
+  const W=(maxX-minX)*COLW+NW+60, H=(maxL-minL)*LH+NHt+44, cy=22-minL*LH;
+  const svg=el(SVGNS,"svg",{width:W,height:H});
+  const defs=el(SVGNS,"defs");
+  for(const [id,c] of [["ah","var(--edge)"],["ah2","#e3873b"]]){
+    const m=el(SVGNS,"marker",{id,markerWidth:7,markerHeight:7,refX:6,refY:3,orient:"auto"});
+    m.appendChild(el(SVGNS,"path",{d:"M0,0 L6,3 L0,6 Z",fill:c})); defs.appendChild(m);
+  } svg.appendChild(defs);
+  const sx=x=>(x-minX)*COLW+20, sy=l=>cy+l*LH;
+  const eset=new Set(hit.edges.map(([a,b])=>a+">"+b));
+  for(const [a,b] of hit.edges){
+    const na=nodes.find(n=>n.id===a), nb=nodes.find(n=>n.id===b); if(!na||!nb) continue;
+    const x1=sx(na.x)+NW,y1=sy(na.lane)+NHt/2,x2=sx(nb.x),y2=sy(nb.lane)+NHt/2,mx=(x1+x2)/2;
+    const bi=eset.has(b+">"+a);
+    const p=el(SVGNS,"path",{class:"edge",d:`M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}`,"marker-end":bi?"url(#ah2)":"url(#ah)"});
+    if(bi) p.setAttribute("stroke","#e3873b");
+    p.appendChild(mkTitle(bi?`bidirectional ${a}↔${b} (inversion / cycle)`:`edge ${a}→${b}`)); svg.appendChild(p);
   }
-  svg.appendChild(defs);
-
-  const sx = x => (x - minX) * COLW + 20;
-  const sy = lane => cy + lane * LANEH;
-
-  // which columns are collapsed (variant lanes hidden)
-  const isCollapsed = x => collapsed.get(`${idx}:${x}`) === true;
-  const hidden = new Set();
-  for (const n of nodes) if (!n.backbone && isCollapsed(n.x)) hidden.add(n.id);
-
-  // detect bidirectional pairs: both a→b and b→a present ⇒ an inversion / cyclic link
-  const eset = new Set(hit.edges.map(([a, b]) => a + ">" + b));
-  const isBidir = (a, b) => eset.has(b + ">" + a);
-
-  // edges first (under nodes). Directed: arrowhead shows traversal order.
-  for (const [a, b] of hit.edges) {
-    if (hidden.has(a) || hidden.has(b)) continue;
-    const na = nodes.find(n => n.id === a), nb = nodes.find(n => n.id === b);
-    if (!na || !nb) continue;
-    const x1 = sx(na.x) + NW, y1 = sy(na.lane) + NH / 2;
-    const x2 = sx(nb.x), y2 = sy(nb.lane) + NH / 2;
-    const mx = (x1 + x2) / 2;
-    const bidir = isBidir(a, b);
-    const p = document.createElementNS(SVG, "path");
-    p.setAttribute("class", "edge");
-    if (bidir) { p.setAttribute("stroke", "#e3873b"); p.setAttribute("marker-end", "url(#ah2)"); }
-    else { p.setAttribute("marker-end", "url(#ah)"); }
-    p.setAttribute("d", `M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}`);
-    p.appendChild(mkTitle(bidir
-      ? `bidirectional link ${a}↔${b} (inversion / cycle: haplotypes traverse it both ways)`
-      : `edge ${a}→${b}`));
-    svg.appendChild(p);
-  }
-
-  // collapse badges per bubble column
-  const colVariants = {};
-  for (const n of nodes) if (!n.backbone) colVariants[n.x] = (colVariants[n.x] || 0) + 1;
-  for (const x in colVariants) {
-    const badge = document.createElementNS(SVG, "g");
-    badge.setAttribute("class", "collapse");
-    const bx = sx(+x) + NW / 2, by = sy(minL) - 6;
-    const t = document.createElementNS(SVG, "text");
-    t.setAttribute("x", bx); t.setAttribute("y", by); t.setAttribute("text-anchor", "middle");
-    t.textContent = isCollapsed(+x) ? `▶ ${colVariants[x]} alleles` : `▼ ${colVariants[x]} alleles`;
-    badge.appendChild(t);
-    badge.addEventListener("click", () => {
-      collapsed.set(`${idx}:${+x}`, !isCollapsed(+x));
-      const fresh = renderTube(hit, idx);
-      svg.replaceWith(fresh);
-    });
-    svg.appendChild(badge);
-  }
-
-  // nodes
-  for (const n of nodes) {
-    if (hidden.has(n.id)) continue;
-    const g = document.createElementNS(SVG, "g");
-    g.setAttribute("class", "node " + nodeClass(n));
-    const r = document.createElementNS(SVG, "rect");
-    r.setAttribute("x", sx(n.x)); r.setAttribute("y", sy(n.lane));
-    r.setAttribute("width", NW); r.setAttribute("height", NH);
-    r.setAttribute("rx", 6);
-    g.appendChild(r);
-    const label = document.createElementNS(SVG, "text");
-    label.setAttribute("x", sx(n.x) + 8); label.setAttribute("y", sy(n.lane) + 20);
-    label.textContent = (n.seq.length > 12 ? n.seq.slice(0, 12) : n.seq);
-    g.appendChild(label);
-    const blen = document.createElementNS(SVG, "text"); // length under the node
-    blen.setAttribute("x", sx(n.x) + NW / 2); blen.setAttribute("y", sy(n.lane) + NH + 12);
-    blen.setAttribute("text-anchor", "middle"); blen.setAttribute("fill", "var(--dim)");
-    blen.setAttribute("font-size", "10"); blen.textContent = `${n.len} bp`;
-    g.appendChild(blen);
-    r.addEventListener("mousemove", e => showTip(e,
-      `node ${n.id}${n.hit ? " ◆ match" : ""}\n${n.pos}\nlen ${n.len} bp\n${n.seq}`));
-    r.addEventListener("mouseleave", hideTip);
+  for(const n of nodes){
+    const g=el(SVGNS,"g",{class:"node "+nodeClass(n)});
+    const r=el(SVGNS,"rect",{x:sx(n.x),y:sy(n.lane),width:NW,height:NHt,rx:6}); g.appendChild(r);
+    const t=el(SVGNS,"text",{x:sx(n.x)+8,y:sy(n.lane)+20}); t.textContent=n.seq.slice(0,12); g.appendChild(t);
+    const bl=el(SVGNS,"text",{x:sx(n.x)+NW/2,y:sy(n.lane)+NHt+12,"text-anchor":"middle",fill:"var(--dim)","font-size":10}); bl.textContent=n.len+" bp"; g.appendChild(bl);
+    r.addEventListener("mousemove",e=>showTip(e,`node ${n.id}${n.hit?" ◆ match":""}\n${n.pos}\nlen ${n.len} bp\n${n.seq}`));
+    r.addEventListener("mouseleave",hideTip);
+    r.addEventListener("click",()=>{ if(over.map.has(n.id)) zoomToNode(n.id); selectNode(n.id); });
     svg.appendChild(g);
-  }
-
-  // collapsed columns: a diamond on the backbone lane
-  for (const x in colVariants) {
-    if (!isCollapsed(+x)) continue;
-    const d = document.createElementNS(SVG, "path");
-    const cx = sx(+x) + NW + 6, ccy = sy(0) + NH / 2;
-    d.setAttribute("d", `M${cx},${ccy - 9} L${cx + 9},${ccy} L${cx},${ccy + 9} L${cx - 9},${ccy} Z`);
-    d.setAttribute("fill", "#241436"); d.setAttribute("stroke", "var(--variant)");
-    svg.appendChild(d);
   }
   return svg;
 }
-
-function renderCodons(hit) {
-  const box = document.createElement("div");
-  box.className = "codons";
-  if (!hit.codons.length) return box;
-  const aa = hit.protein.split("");
-  let mer = "<tr class='mer'><td class='lbl'>3-mers</td>";
-  let arow = "<tr class='aa'><td class='lbl'>protein</td>";
-  hit.codons.forEach((c, i) => { mer += `<td>${c}</td>`; arow += `<td>${aa[i] || ""}</td>`; });
-  box.innerHTML = `<table>${mer}</tr>${arow}</tr></table>`;
-  return box;
+function renderCodons(hit){
+  const box=document.createElement("div"); box.className="codons"; if(!hit.codons.length) return box;
+  const aa=hit.protein.split(""); let m="<tr class='mer'><td class='lbl'>3-mers</td>", a="<tr class='aa'><td class='lbl'>protein</td>";
+  hit.codons.forEach((c,i)=>{ m+=`<td>${c}</td>`; a+=`<td>${aa[i]||""}</td>`; });
+  box.innerHTML=`<table>${m}</tr>${a}</tr></table>`; return box;
 }
 
-// ---- tooltip ----
-const tip = document.getElementById("tooltip");
-function showTip(e, text) {
-  tip.textContent = text; tip.style.display = "block";
-  tip.style.left = (e.clientX + 14) + "px"; tip.style.top = (e.clientY + 14) + "px";
-}
-function hideTip() { tip.style.display = "none"; }
-
-// ---- app ----
-let browser = null;
-const results = document.getElementById("results");
-const statusEl = document.getElementById("status");
-
-function runQuery() {
-  const q = document.getElementById("q").value.trim().toUpperCase().replace(/[^ACGTN]/g, "");
-  results.innerHTML = "";
-  collapsed.clear();
-  if (q.length < 2) { results.innerHTML = `<div class="empty">— type at least 2 bases —</div>`; return; }
-  const t0 = performance.now();
-  const data = JSON.parse(browser.query(q, 40, 8));
-  const dt = (performance.now() - t0).toFixed(1);
-  const more = data.n_total > data.n_hits ? ` (showing first ${data.n_hits})` : "";
-  statusEl.textContent =
-    `“${q}” → ${data.n_total} match${data.n_total === 1 ? "" : "es"}${more} · ${dt} ms` +
-    (q.length <= 4 ? "  —  tip: longer queries (8–12 bp) are far more specific" : "");
-  if (!data.n_hits) { results.innerHTML = `<div class="empty">no matches for ${q}</div>`; return; }
-  data.hits.forEach((h, i) => results.appendChild(renderHit(h, i)));
+// ---------- search ----------
+const statusmsg=document.getElementById("statusmsg"), chipsEl=document.getElementById("chips");
+function runSearch(){
+  const q=document.getElementById("q").value.trim().toUpperCase().replace(/[^ACGTN]/g,"");
+  matchSet=new Set(); chipsEl.replaceChildren();
+  if(q.length<2){ statusmsg.textContent="Type ≥2 bases to highlight matches. Scroll=zoom, drag=pan."; buildScene(); applyView(); return; }
+  const res=JSON.parse(browser.matches(q,500));
+  res.matches.forEach(m=>matchSet.add(m.node));
+  statusmsg.textContent=`“${q}” → ${res.n_total} match${res.n_total===1?"":"es"}`+(res.matches.length<res.n_total?` (highlighting first ${res.matches.length})`:"")+(q.length<=4?"  — longer queries are more specific":"");
+  res.matches.slice(0,24).forEach(m=>{ const c=document.createElement("span"); c.className="chip"; c.textContent=m.pos; c.title="zoom to "+m.pos; c.onclick=()=>{ zoomToNode(m.node); selectNode(m.node); }; chipsEl.appendChild(c); });
+  buildScene(); applyView();
+  if(res.matches[0]) zoomToNode(res.matches[0].node);
 }
 
-document.getElementById("view3d").addEventListener("click", e => {
-  const b = e.currentTarget;
-  const on = b.getAttribute("aria-pressed") === "true";
-  b.setAttribute("aria-pressed", (!on).toString());
-  statusEl.textContent = on ? "2D tube-map." : "3D WebGL view is planned — using 2D tube-map for now.";
-});
-
-async function loadContainer(bytes) {
-  browser = new wasm_bindgen.GenomeBrowser(bytes);
-  document.getElementById("dsmeta").textContent =
-    `${browser.region} · ${browser.segments} segments · ${browser.haplotypes} haplotypes`;
-  const sel = document.getElementById("dataset");
-  sel.innerHTML = `<option>${browser.region}</option>`;
+// ---------- boot ----------
+async function loadContainer(bytes){
+  browser=new wasm_bindgen.GenomeBrowser(bytes);
+  over=JSON.parse(browser.overview());
+  over.map=new Map(over.nodes.map(n=>[n.id,n]));
+  document.getElementById("dsmeta").textContent=`${over.chrom}:${over.start.toLocaleString()} · ${over.span.toLocaleString()} bp · ${over.n_nodes} nodes · ${browser.haplotypes} haplotypes`;
+  document.getElementById("dataset").innerHTML=`<option>${browser.region}</option>`;
+  buildScene(); fit();
+}
+function setupInteractions(){
+  let drag=null;
+  ov.addEventListener("wheel",e=>{ e.preventDefault(); const r=ov.getBoundingClientRect(); zoomAt(e.clientX-r.left,e.clientY-r.top, e.deltaY<0?1.15:1/1.15); },{passive:false});
+  ov.addEventListener("mousedown",e=>{ drag={x:e.clientX,y:e.clientY,tx:view.tx,ty:view.ty}; ov.classList.add("drag"); });
+  window.addEventListener("mousemove",e=>{ if(!drag)return; view.tx=drag.tx+(e.clientX-drag.x); view.ty=drag.ty+(e.clientY-drag.y); applyView(); });
+  window.addEventListener("mouseup",()=>{ drag=null; ov.classList.remove("drag"); });
+  window.addEventListener("resize",()=>{ buildScene(); applyView(); });
+  const r=()=>{ const b=ov.getBoundingClientRect(); return {cx:b.width/2,cy:b.height/2}; };
+  document.getElementById("zin").onclick=()=>{ const c=r(); zoomAt(c.cx,c.cy,1.4); };
+  document.getElementById("zout").onclick=()=>{ const c=r(); zoomAt(c.cx,c.cy,1/1.4); };
+  document.getElementById("zfit").onclick=fit;
+  document.getElementById("view3d").onclick=()=>{ statusmsg.textContent="3D view is planned — the 2D fly-over is live."; };
+  let t=null; document.getElementById("q").addEventListener("input",()=>{ clearTimeout(t); t=setTimeout(runSearch,140); });
 }
 
-wasm_bindgen(b64ToBytes(WASM_B64).buffer).then(async () => {
+ov=document.getElementById("ov"); sceneG=document.getElementById("scene"); ruleG=document.getElementById("rule");
+wasm_bindgen(b64ToBytes(WASM_B64).buffer).then(async ()=>{
   await loadContainer(b64ToBytes(CONTAINER_B64));
-  const q = document.getElementById("q");
-  let timer = null;
-  q.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(runQuery, 120); });
-  q.focus();
-}).catch(err => {
-  statusEl.textContent = "failed to initialise WASM: " + err;
-});
+  setupInteractions();
+  document.getElementById("q").focus();
+}).catch(err=>{ statusmsg.textContent="failed to initialise WASM: "+err; });
 </script>
 </body>
 </html>

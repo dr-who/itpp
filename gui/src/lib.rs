@@ -42,6 +42,16 @@ impl GenomeBrowser {
         self.inner.n_haplotypes()
     }
 
+    /// The whole graph laid out in genomic coordinates for the zoomable overview.
+    pub fn overview(&self) -> String {
+        self.inner.overview_json()
+    }
+
+    /// Node ids + coords of up to `max` matches, to highlight/zoom-to on the overview.
+    pub fn matches(&self, query: &str, max: usize) -> String {
+        self.inner.matches_json(query, max)
+    }
+
     /// Search the pangenome for `query` and return the matches + local subgraphs as JSON.
     pub fn query(&self, query: &str, max_hits: usize, radius: usize) -> String {
         self.inner.query_json(query, max_hits, radius)
@@ -51,13 +61,14 @@ impl GenomeBrowser {
     /// "extend context" buttons). Returns `{"hit":{…}}`.
     pub fn context(
         &self,
-        node: u64,
+        node: u32,
         offset: usize,
         strand: &str,
         left: usize,
         right: usize,
     ) -> String {
-        self.inner.context_json(node, offset, strand, left, right)
+        // node ids are assigned sequentially from 0, so u32 is ample and avoids JS BigInt.
+        self.inner.context_json(u64::from(node), offset, strand, left, right)
     }
 }
 

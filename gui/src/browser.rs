@@ -264,6 +264,144 @@ impl Browser {
         }
     }
 
+    /// Lay out the WHOLE graph in genomic coordinates for the zoomable overview ("see the
+    /// world"): the backbone is a straight left→right axis (each node at its cumulative bp
+    /// offset, lane 0); variants sit at their nearest backbone anchor, packed into lanes
+    /// above/below. `x` is a bp offset from the region start; the UI scales/pans it.
+    #[must_use]
+    pub fn overview_json(&self) -> String {
+        let mut pos: BTreeMap<NodeId, (i64, i32)> = BTreeMap::new();
+        for (&n, &off) in &self.backbone_off {
+            pos.insert(n, (off as i64, 0));
+        }
+        // variants sorted by anchor x, packed into alternating lanes by interval
+        let mut variants: Vec<(NodeId, i64, usize)> = self
+            .graph
+            .segments
+            .values()
+            .filter(|s| !self.backbone_nodes.contains(&s.id))
+            .map(|s| (s.id, self.anchor_x(s.id), s.seq.len()))
+            .collect();
+        variants.sort_by_key(|v| v.1);
+        let mut lane_end: Vec<i64> = Vec::new();
+        for (id, x, len) in &variants {
+            let li = (0..lane_end.len()).find(|&li| lane_end[li] <= *x).unwrap_or_else(|| {
+                lane_end.push(0);
+                lane_end.len() - 1
+            });
+            lane_end[li] = x + (*len as i64).max(1) + 24;
+            let lane = if li % 2 == 0 { (li / 2 + 1) as i32 } else { -((li / 2 + 1) as i32) };
+            pos.insert(*id, (*x, lane));
+        }
+
+        let span = self.backbone_off.values().copied().max().unwrap_or(0)
+            + self
+                .graph
+                .backbone_walk()
+                .and_then(|w| w.steps.last())
+                .and_then(|s| self.graph.segments.get(&s.node))
+                .map_or(0, |s| s.seq.len());
+
+        let mut s = String::from("{");
+        s.push_str(&format!("\"chrom\":{},", jstr(&self.chrom)));
+        s.push_str(&format!("\"start\":{},", self.start_coord));
+        s.push_str(&format!("\"span\":{},", span));
+        s.push_str(&format!("\"n_nodes\":{},", self.graph.segments.len()));
+        s.push_str("\"nodes\":[");
+        let mut first = true;
+        for seg in self.graph.segments.values() {
+            let (x, lane) = pos.get(&seg.id).copied().unwrap_or((0, 0));
+            if !first {
+                s.push(',');
+            }
+            first = false;
+            s.push_str(&format!(
+                "{{\"id\":{},\"x\":{},\"lane\":{},\"len\":{},\"bb\":{},\"seq\":{}}}",
+                seg.id,
+                x,
+                lane,
+                seg.seq.len(),
+                self.backbone_nodes.contains(&seg.id),
+                jstr(&preview(seg.seq.as_bytes()))
+            ));
+        }
+        s.push_str("],\"edges\":[");
+        for (i, e) in self.graph.edges.iter().enumerate() {
+            if i > 0 {
+                s.push(',');
+            }
+            s.push_str(&format!("[{},{}]", e.from, e.to));
+        }
+        s.push_str("]}");
+        s
+    }
+
+    /// x (bp offset) of the nearest backbone anchor to a variant node.
+    fn anchor_x(&self, v: NodeId) -> i64 {
+        // nearest backbone upstream → its end; else nearest downstream → its start; else 0
+        for (adj, downstream) in [(&self.pred, false), (&self.succ, true)] {
+            let mut seen: BTreeSet<NodeId> = BTreeSet::new();
+            let mut frontier = vec![v];
+            for _ in 0..8 {
+                let mut next = Vec::new();
+                for n in frontier.drain(..) {
+                    if let Some(neigh) = adj.get(&n) {
+                        for &m in neigh {
+                            if let Some(&off) = self.backbone_off.get(&m) {
+                                let len = self.graph.segments.get(&m).map_or(0, |s| s.seq.len());
+                                return if downstream { off as i64 } else { off as i64 + len as i64 };
+                            }
+                            if seen.insert(m) {
+                                next.push(m);
+                            }
+                        }
+                    }
+                }
+                frontier = next;
+            }
+        }
+        0
+    }
+
+    /// Node ids (and coords) of up to `max` matches of the query, for highlighting on the
+    /// overview and building "jump to" targets.
+    #[must_use]
+    pub fn matches_json(&self, raw: &str, max: usize) -> String {
+        let q: Vec<u8> = raw.trim().bytes().map(|b| b.to_ascii_uppercase()).collect();
+        let mut s = String::from("{\"matches\":[");
+        if q.is_empty() {
+            s.push_str("]}");
+            return s;
+        }
+        let rc = reverse_complement(&q);
+        let both = rc != q;
+        let mut count = 0;
+        let mut first = true;
+        'outer: for seg in self.graph.segments.values() {
+            let hay = seg.seq.as_bytes();
+            for needle in std::iter::once(&q).chain(if both { Some(&rc) } else { None }) {
+                if find_sub(hay, needle).is_some() {
+                    if !first {
+                        s.push(',');
+                    }
+                    first = false;
+                    s.push_str(&format!(
+                        "{{\"node\":{},\"pos\":{}}}",
+                        seg.id,
+                        jstr(&self.hit_pos(seg.id, 0))
+                    ));
+                    count += 1;
+                    if count >= max {
+                        break 'outer;
+                    }
+                    break; // one entry per segment is enough to highlight it
+                }
+            }
+        }
+        s.push_str(&format!("],\"n_total\":{}}}", self.count_matches(raw)));
+        s
+    }
+
     /// Total occurrences of the query (both strands) across all segments — so the UI can say
     /// "showing 40 of N". Short queries (e.g. a 3-mer) match thousands of times.
     #[must_use]
@@ -496,6 +634,23 @@ mod tests {
     #[test]
     fn empty_query_no_hits() {
         assert!(browser().query("", 10, 2).is_empty());
+    }
+
+    #[test]
+    fn overview_lays_out_whole_graph() {
+        let b = browser();
+        let json = b.overview_json();
+        assert!(json.contains("\"nodes\":["));
+        assert!(json.contains("\"span\":"));
+        assert!(json.contains("\"bb\":true")); // backbone nodes present
+        // every segment is represented
+        assert_eq!(json.matches("\"id\":").count(), b.n_segments());
+        // matches highlighting returns node ids
+        let g = generate(&SynthParams { haplotypes: 6, backbone_blocks: 20, seed: 3, ..Default::default() });
+        let first = g.backbone_walk().unwrap().steps[0].node;
+        let sub = String::from_utf8(g.segments[&first].seq.as_bytes()[10..18].to_vec()).unwrap();
+        let m = b.matches_json(&sub, 100);
+        assert!(m.contains("\"matches\":[") && m.contains("\"node\":"));
     }
 
     #[test]

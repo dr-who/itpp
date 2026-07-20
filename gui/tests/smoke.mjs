@@ -53,5 +53,23 @@ ok(empty.n_hits === 0, "empty query yields 0 hits");
 const longer = JSON.parse(b.query("GAATTC", 10, 4)); // EcoRI site, common
 ok(Array.isArray(longer.hits), "longer query returns hits array");
 
+// Overview: the whole graph laid out in genomic coordinates.
+const ov = JSON.parse(b.overview());
+ok(ov.n_nodes === 1748, `overview has ${ov.n_nodes} nodes`);
+ok(ov.chrom === "chr6" && ov.start === 31825251, `overview coords ${ov.chrom}:${ov.start}`);
+ok(ov.span > 80000, `span ${ov.span} bp`);
+ok(ov.nodes.some((n) => n.bb) && ov.nodes.some((n) => !n.bb), "overview has backbone + variant nodes");
+ok(ov.nodes.every((n) => typeof n.x === "number" && typeof n.lane === "number"), "every node has x + lane");
+ok(Array.isArray(ov.edges) && ov.edges.length > 0, `overview has ${ov.edges.length} edges`);
+
+// Matches: node ids to highlight/zoom-to.
+const mm = JSON.parse(b.matches("CAGCAGCAGCAG", 500));
+ok(mm.matches.length >= 1 && mm.matches[0].node !== undefined, "matches return node ids");
+ok(mm.n_total >= mm.matches.length, "match total ≥ highlighted");
+
+// Context (extend) around a real node returns a hit object.
+const ctx = JSON.parse(b.context(ov.nodes[0].id, 0, "+", 6, 6));
+ok(ctx.hit && Array.isArray(ctx.hit.nodes), "context returns a hit with nodes");
+
 console.log(failures === 0 ? "\nALL WASM SMOKE TESTS PASSED" : `\n${failures} FAILURES`);
 process.exit(failures === 0 ? 0 : 1);
