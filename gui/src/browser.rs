@@ -138,11 +138,13 @@ impl Browser {
     #[must_use]
     pub fn query_json(&self, raw: &str, max_hits: usize, radius: usize) -> String {
         let hits = self.query(raw, max_hits, radius);
+        let total = self.count_matches(raw);
         let q_up: String = raw.trim().to_ascii_uppercase();
         let mut s = String::from("{");
         s.push_str(&format!("\"region\":{},", jstr(&self.region())));
         s.push_str(&format!("\"chrom\":{},", jstr(&self.chrom)));
         s.push_str(&format!("\"query\":{},", jstr(&q_up)));
+        s.push_str(&format!("\"n_total\":{},", total));
         s.push_str(&format!("\"n_hits\":{},", hits.len()));
         s.push_str("\"hits\":[");
         for (i, h) in hits.iter().enumerate() {
@@ -262,6 +264,27 @@ impl Browser {
         }
     }
 
+    /// Total occurrences of the query (both strands) across all segments — so the UI can say
+    /// "showing 40 of N". Short queries (e.g. a 3-mer) match thousands of times.
+    #[must_use]
+    pub fn count_matches(&self, raw: &str) -> usize {
+        let q: Vec<u8> = raw.trim().bytes().map(|b| b.to_ascii_uppercase()).collect();
+        if q.is_empty() {
+            return 0;
+        }
+        let rc = reverse_complement(&q);
+        let both = rc != q;
+        let mut total = 0;
+        for seg in self.graph.segments.values() {
+            let hay = seg.seq.as_bytes();
+            total += count_sub(hay, &q);
+            if both {
+                total += count_sub(hay, &rc);
+            }
+        }
+        total
+    }
+
     fn bfs(&self, start: NodeId, radius: usize, upstream: bool, depth: &mut BTreeMap<NodeId, i32>) {
         let adj = if upstream { &self.pred } else { &self.succ };
         let mut frontier = vec![start];
@@ -375,6 +398,13 @@ fn find_sub(hay: &[u8], needle: &[u8]) -> Option<usize> {
         return None;
     }
     hay.windows(needle.len()).position(|w| w == needle)
+}
+
+fn count_sub(hay: &[u8], needle: &[u8]) -> usize {
+    if needle.is_empty() || needle.len() > hay.len() {
+        return 0;
+    }
+    hay.windows(needle.len()).filter(|w| *w == needle).count()
 }
 
 fn preview(seq: &[u8]) -> String {

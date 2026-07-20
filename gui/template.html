@@ -107,7 +107,7 @@ function renderHit(hit, idx) {
   wrap.className = "hit";
 
   // per-row context state so ◀/▶ can widen the window as far as the user wants
-  const st = { node: hit.node, offset: hit.offset, strand: hit.strand, left: 4, right: 4, hit };
+  const st = { node: hit.node, offset: hit.offset, strand: hit.strand, left: 8, right: 8, hit };
 
   const bar = document.createElement("div");
   bar.className = "bar";
@@ -240,6 +240,11 @@ function renderTube(hit, idx) {
     label.setAttribute("x", sx(n.x) + 8); label.setAttribute("y", sy(n.lane) + 20);
     label.textContent = (n.seq.length > 12 ? n.seq.slice(0, 12) : n.seq);
     g.appendChild(label);
+    const blen = document.createElementNS(SVG, "text"); // length under the node
+    blen.setAttribute("x", sx(n.x) + NW / 2); blen.setAttribute("y", sy(n.lane) + NH + 12);
+    blen.setAttribute("text-anchor", "middle"); blen.setAttribute("fill", "var(--dim)");
+    blen.setAttribute("font-size", "10"); blen.textContent = `${n.len} bp`;
+    g.appendChild(blen);
     r.addEventListener("mousemove", e => showTip(e,
       `node ${n.id}${n.hit ? " ◆ match" : ""}\n${n.pos}\nlen ${n.len} bp\n${n.seq}`));
     r.addEventListener("mouseleave", hideTip);
@@ -289,9 +294,12 @@ function runQuery() {
   collapsed.clear();
   if (q.length < 2) { results.innerHTML = `<div class="empty">— type at least 2 bases —</div>`; return; }
   const t0 = performance.now();
-  const data = JSON.parse(browser.query(q, 40, 4));
+  const data = JSON.parse(browser.query(q, 40, 8));
   const dt = (performance.now() - t0).toFixed(1);
-  statusEl.textContent = `“${q}” → ${data.n_hits} match${data.n_hits === 1 ? "" : "es"} in ${dt} ms`;
+  const more = data.n_total > data.n_hits ? ` (showing first ${data.n_hits})` : "";
+  statusEl.textContent =
+    `“${q}” → ${data.n_total} match${data.n_total === 1 ? "" : "es"}${more} · ${dt} ms` +
+    (q.length <= 4 ? "  —  tip: longer queries (8–12 bp) are far more specific" : "");
   if (!data.n_hits) { results.innerHTML = `<div class="empty">no matches for ${q}</div>`; return; }
   data.hits.forEach((h, i) => results.appendChild(renderHit(h, i)));
 }
