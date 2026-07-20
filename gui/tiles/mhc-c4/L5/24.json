@@ -1,0 +1,1 @@
+{"chrom":"chr6","start":31972046,"span":83601,"win":[62712,65325],"truncated":false,"n_nodes":1748,"nodes":[{"id":841,"x":64775,"lane":0,"len":1,"bb":true,"kind":"backbone","seq":"A"},{"id":857,"x":65146,"lane":0,"len":1,"bb":true,"kind":"backbone","seq":"C"}],"edges":[]}

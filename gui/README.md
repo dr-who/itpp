@@ -16,3 +16,19 @@ the browser.
 
 Status: scaffolding. Rendering stack + build/delivery are being finalized; this folder will hold
 the wasm crate, the query/layout logic (with tests), and the self-contained `genome-browser.html`.
+
+## Tiled browser (streams a full chromosome)
+
+`gui/tiled-browser.html` fetches a **multi-resolution tile pyramid** (built by `itpp-tile`) and
+streams only the tiles in view — so it scales to a whole chromosome/genome, never loading more
+than a screenful. Pure fetch+JS (no WASM). Serve the tiles and open it:
+
+```sh
+# generate tiles for a container
+cargo run --release -p itpp-gui --bin itpp-tile -- --in database/mhc-c4.itpp --out gui/tiles/mhc-c4
+# serve, then open http://localhost:8000/gui/tiled-browser.html?tiles=gui/tiles/mhc-c4/
+python3 -m http.server 8000
+# for chromosome-scale tiles on S3, serve them with:  rclone serve http exaba:sockjam-eedf/itpp/tiles --addr :8000
+```
+
+Zoomed out = variant-density + CNV markers; zoom in = graph nodes → proteins → nucleotides.

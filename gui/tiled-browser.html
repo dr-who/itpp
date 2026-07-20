@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="color-scheme" content="dark" />
+<title>ITPP tiled genome browser</title>
+<style>
+  :root { color-scheme: dark;
+    --bg:#0d1117; --panel:#161b22; --line:#30363d; --fg:#e6edf3; --dim:#8b949e; --backbone:#3b82f6; }
+  * { box-sizing:border-box; } html,body { height:100%; margin:0; }
+  body { background:var(--bg); color:var(--fg); display:flex; flex-direction:column;
+    font:14px/1.5 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; }
+  header { padding:10px 16px; border-bottom:1px solid var(--line); background:var(--panel);
+    display:flex; gap:14px; align-items:center; flex-wrap:wrap; }
+  header h1 { font-size:15px; margin:0; font-weight:650; }
+  .meta { color:var(--dim); font-size:12px; font-family:ui-monospace,monospace; }
+  .controls { margin-left:auto; display:flex; gap:8px; align-items:center; }
+  input,button { background:#0d1117; color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:6px 9px; font-size:13px; }
+  input#loc { width:230px; font-family:ui-monospace,monospace; }
+  button { cursor:pointer; } button:hover { border-color:var(--fg); }
+  #status { padding:5px 16px; color:var(--dim); font-size:12px; border-bottom:1px solid var(--line); font-family:ui-monospace,monospace; }
+  #view { flex:1 1 auto; position:relative; overflow:hidden; background:#0b0f16; }
+  #ov { width:100%; height:100%; display:block; cursor:grab; } #ov.drag { cursor:grabbing; }
+  .rule line { stroke:var(--line); } .rule text { fill:var(--dim); font:11px ui-monospace,monospace; }
+  .nd { stroke-width:0.6px; }
+  .nd.backbone{fill:#1b3a63;stroke:var(--backbone);} .nd.snp{fill:#33204d;stroke:#a855f7;}
+  .nd.indel{fill:#3a2140;stroke:#d16ba5;} .nd.tandem{fill:#14402c;stroke:#2ea043;} .nd.large{fill:#4a2410;stroke:#e3873b;}
+  .dbar{stroke:none;} .cnv{fill:#e3873b;stroke:#000;stroke-width:0.4;}
+  #ov text{pointer-events:none;}
+  #tooltip{position:fixed;pointer-events:none;background:#000d;border:1px solid var(--line);border-radius:6px;padding:6px 9px;font:12px/1.4 ui-monospace,monospace;z-index:20;display:none;}
+  .zoomctl{position:absolute;right:12px;bottom:12px;display:flex;flex-direction:column;gap:6px;}
+  .zoomctl button{width:34px;height:34px;font-size:17px;padding:0;}
+  .legend{font-size:11px;color:var(--dim);display:flex;gap:10px;} .legend b{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:3px;}
+</style>
+</head>
+<body>
+<header>
+  <div><h1>ITPP tiled browser</h1><div class="meta" id="meta">loading manifest…</div></div>
+  <span class="legend"><span><b style="background:#1b3a63"></b>backbone</span><span><b style="background:#33204d"></b>SNP</span>
+    <span><b style="background:#4a2410"></b>large/CNV</span><span><b style="background:#2ea043"></b>tandem</span></span>
+  <div class="controls">
+    <input id="loc" placeholder="chr6:31,980,000" />
+    <button id="go">go</button>
+  </div>
+</header>
+<div id="status">multi-resolution tiles — only the viewport streams (≤ one screenful of tiles). scroll=zoom, drag=pan.</div>
+<div id="view">
+  <svg id="ov"><g id="rule" class="rule"></g><g id="scene"></g></svg>
+  <div class="zoomctl"><button id="zin">+</button><button id="zout">−</button><button id="zfit">fit</button></div>
+</div>
+<div id="tooltip"></div>
+<script>
+"use strict";
+const SVGNS="http://www.w3.org/2000/svg";
+const params=new URLSearchParams(location.search);
+const BASE=(params.get("tiles")||"tiles/mhc-c4/").replace(/\/?$/,"/");
+const LANEH=30,NH=20;
+let man=null, view={k:1,x0:0}, cache=new Map(), loading=new Set();
+const ov=document.getElementById("ov"),scene=document.getElementById("scene"),rule=document.getElementById("rule");
+const tip=document.getElementById("tooltip"),statusEl=document.getElementById("status");
+
+function el(n,a){const e=document.createElementNS(SVGNS,n);for(const k in(a||{}))e.setAttribute(k,a[k]);return e;}
+function showTip(e,t){tip.textContent=t;tip.style.display="block";tip.style.left=(e.clientX+14)+"px";tip.style.top=(e.clientY+14)+"px";}
+function hideTip(){tip.style.display="none";}
+function box(){const b=ov.getBoundingClientRect();return{w:b.width||innerWidth,h:b.height||360};}
+function sX(off){return (off-view.x0)*view.k;}
+function baseColor(b){return {A:"#3fb950",C:"#58a6ff",G:"#e3b341",T:"#f85149",N:"#8b949e"}[b]||"#8b949e";}
+const AAT="FFLLSSSSYY**CC*WLLLLPPPPHHQQRRRRIIIMTTTTNNKKSSRRVVVVAAAADDEEGGGG",B2I={T:0,C:1,A:2,G:3};
+function tCodon(c){const a=B2I[c[0]],b=B2I[c[1]],d=B2I[c[2]];return(a==null||b==null||d==null)?"X":AAT[a*16+b*4+d];}
+function aaColor(a){if("AVLIMFWC".includes(a))return"#d0b24b";if("STNQY".includes(a))return"#3fb950";if("KRH".includes(a))return"#58a6ff";if("DE".includes(a))return"#f85149";if("GP".includes(a))return"#d16ba5";return"#8b949e";}
+
+// ---- level + tile selection ----
+function viewportBp(){return box().w/view.k;}
+function pickLevel(){const vp=viewportBp();let L=Math.round(3+Math.log2(man.span/vp));return Math.max(0,Math.min(man.max_level,L));}
+function tileUrl(L,t){return `${BASE}L${L}/${t}.json`;}
+function fetchTile(L,t){
+  const url=tileUrl(L,t); if(cache.has(url)||loading.has(url)) return;
+  loading.add(url);
+  fetch(url).then(r=>r.ok?r.json():null).catch(()=>null).then(d=>{loading.delete(url);cache.set(url,d);render();});
+}
+
+// ---- render ----
+function render(){
+  if(!man) return;
+  const {w:W,h:H}=box(),cy=H/2, L=pickLevel(), tbp=man.tile_bp[L], ntiles=1<<L;
+  const t0=Math.max(0,Math.floor(view.x0/tbp)), t1=Math.min(ntiles-1,Math.floor((view.x0+viewportBp())/tbp));
+  scene.replaceChildren();
+  statusEl.textContent=`level ${L}/${man.max_level} · tile ${tbp.toLocaleString()} bp · tiles ${t0}–${t1} · ${(1/view.k).toFixed(view.k>1?2:0)} bp/px`;
+  for(let t=t0;t<=t1;t++){
+    const d=cache.get(tileUrl(L,t));
+    if(d===undefined){ fetchTile(L,t); continue; }   // not loaded yet → stream it
+    if(d===null) continue;                             // missing tile
+    if(d.bins) drawDensity(d,W,cy);
+    else if(d.nodes) drawNodes(d,W,H,cy);
+  }
+  drawRuler(W);
+}
+function drawDensity(d,W,cy){
+  const [s0,s1]=d.win, binbp=(s1-s0)/d.nbins, maxc=Math.max(1,...d.bins.map(b=>b[0]));
+  for(let i=0;i<d.bins.length;i++){
+    const [cnt,maxlen]=d.bins[i]; if(cnt===0&&maxlen===0) continue;
+    const x=sX(s0+i*binbp), wpx=Math.max(binbp*view.k,1);
+    if(x+wpx<0||x>W) continue;
+    const h=Math.min(90,6+80*cnt/maxc);
+    const hue=200-140*cnt/maxc;
+    const r=el("rect",{class:"dbar",x:x,y:cy-h,width:Math.max(wpx-0.3,0.6),height:h,fill:`hsl(${hue},70%,55%)`});
+    r.addEventListener("mousemove",e=>showTip(e,`${cnt} variants\nchr6 ≈ ${Math.round(man.start+s0+i*binbp).toLocaleString()}`+(maxlen>500?`\n◆ ${maxlen} bp structural variant (CNV)`:"")));
+    r.addEventListener("mouseleave",hideTip); scene.appendChild(r);
+    if(maxlen>1000){ const cx=x+wpx/2; scene.appendChild(el("path",{class:"cnv",d:`M${cx-4},${cy-h-9} L${cx+4},${cy-h-9} L${cx},${cy-h-2} Z`})); }
+  }
+}
+function drawNodes(d,W,H,cy){
+  const showP=view.k>=2.5, showB=view.k>=7;
+  for(const n of d.nodes){
+    const x=sX(n.x),wpx=Math.max(n.len*view.k,1.3); if(x+wpx<-2||x>W+2) continue;
+    const y=cy+n.lane*LANEH;
+    const r=el("rect",{class:"nd "+(n.kind||(n.bb?"backbone":"snp")),x:x,y:y,width:wpx,height:NH,rx:2});
+    r.addEventListener("mousemove",e=>showTip(e,`node ${n.id} · ${n.kind}\nchr6 ≈ ${(man.start+n.x).toLocaleString()}\nlen ${n.len} bp`));
+    r.addEventListener("mouseleave",hideTip); scene.appendChild(r);
+    const seq=n.seq||"";
+    if(showP&&seq){ const fs=Math.min(13,view.k*3*0.62), i0=Math.max(0,Math.floor(-x/view.k)-3), i1=Math.min(seq.length-2,Math.ceil((W-x)/view.k)+2);
+      for(let i=i0;i<i1;i++){ if(((n.x+i)%3)!==0)continue; const aa=tCodon(seq.slice(i,i+3)); if(!aa)continue;
+        const t=el("text",{x:x+(i+1.5)*view.k,y:y-4,"text-anchor":"middle",fill:aaColor(aa),"font-size":fs,"font-weight":"600"}); t.textContent=aa; scene.appendChild(t); } }
+    if(showB&&seq){ const fs=Math.min(15,view.k*0.85), i0=Math.max(0,Math.floor(-x/view.k)-1), i1=Math.min(seq.length,Math.ceil((W-x)/view.k)+1);
+      for(let i=i0;i<i1;i++){ const t=el("text",{x:x+i*view.k+view.k/2,y:y+NH-5,"text-anchor":"middle",fill:baseColor(seq[i]),"font-size":fs}); t.textContent=seq[i]; scene.appendChild(t); } }
+  }
+}
+function drawRuler(W){
+  rule.replaceChildren(); const bpPerPx=1/view.k, raw=bpPerPx*(W/10), pow=Math.pow(10,Math.floor(Math.log10(Math.max(raw,1))));
+  const step=[1,2,5,10].map(m=>m*pow).find(s=>s>=raw)||pow, leftBp=man.start+view.x0;
+  rule.appendChild(el("line",{x1:0,y1:22,x2:W,y2:22}));
+  for(let bp=Math.ceil(leftBp/step)*step;;bp+=step){ const x=sX(bp-man.start); if(x>W)break; if(x<0)continue;
+    rule.appendChild(el("line",{x1:x,y1:14,x2:x,y2:22})); const t=el("text",{x:x+3,y:12}); t.textContent=Math.round(bp).toLocaleString(); rule.appendChild(t); }
+}
+// ---- nav ----
+function fit(){const {w}=box(),pad=30;view.k=(w-2*pad)/Math.max(man.span,1);view.x0=-pad/view.k;render();}
+function clampK(k){const{w}=box();return Math.min(60,Math.max((w/Math.max(man.span,1))/3,k));}
+function zoomAt(px,f){const bp=view.x0+px/view.k;view.k=clampK(view.k*f);view.x0=bp-px/view.k;render();}
+function goTo(coord){ const off=coord-man.start-viewportBp()/2; view.x0=off; render(); }
+function setup(){
+  let drag=null;
+  ov.addEventListener("wheel",e=>{e.preventDefault();const r=ov.getBoundingClientRect(),px=e.clientX-r.left;
+    if(e.ctrlKey) zoomAt(px,e.deltaY<0?1.06:1/1.06);
+    else if(Math.abs(e.deltaX)>Math.abs(e.deltaY)){view.x0+=e.deltaX/view.k;render();}
+    else zoomAt(px,e.deltaY<0?1.12:1/1.12);},{passive:false});
+  ov.addEventListener("mousedown",e=>{drag={x:e.clientX,x0:view.x0};ov.classList.add("drag");});
+  addEventListener("mousemove",e=>{if(!drag)return;view.x0=drag.x0-(e.clientX-drag.x)/view.k;render();});
+  addEventListener("mouseup",()=>{drag=null;ov.classList.remove("drag");});
+  addEventListener("resize",render);
+  document.getElementById("zin").onclick=()=>zoomAt(box().w/2,1.5);
+  document.getElementById("zout").onclick=()=>zoomAt(box().w/2,1/1.5);
+  document.getElementById("zfit").onclick=fit;
+  document.getElementById("go").onclick=()=>{const m=document.getElementById("loc").value.replace(/[, ]/g,"").match(/(\d+)/g);if(m){const c=+m[m.length-1];view.k=clampK(2);goTo(c);}};
+}
+(async function(){
+  try{ man=await (await fetch(BASE+"manifest.json")).json(); }
+  catch(e){ statusEl.textContent="failed to load manifest at "+BASE+"manifest.json — serve the tiles dir (e.g. python3 -m http.server)"; return; }
+  document.getElementById("meta").textContent=`${man.chrom}:${man.start.toLocaleString()} · ${(man.span/1e6).toFixed(2)} Mb · ${man.max_level+1} zoom levels`;
+  setup(); requestAnimationFrame(fit);
+})();
+</script>
+</body>
+</html>
