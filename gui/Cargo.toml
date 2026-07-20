@@ -1,0 +1,23 @@
+[package]
+name = "itpp-gui"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "ITPP genome browser: Rust->WASM engine (query, subgraph layout, 3-mer/protein) for the tube-map viewer."
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+itpp-core.workspace = true
+itpp-codec.workspace = true
+itpp-format.workspace = true
+wasm-bindgen = "=0.2.126"
+
+[dev-dependencies]
+itpp-ingest.workspace = true
+wasm-bindgen-test = "0.3"
+
+[lints.clippy]
+all = "warn"

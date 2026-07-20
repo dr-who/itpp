@@ -6,6 +6,7 @@ members = [
     "source/crates/itpp-format",
     "source/crates/itpp-ingest",
     "source/crates/itpp-cli",
+    "gui",
 ]
 
 [workspace.package]

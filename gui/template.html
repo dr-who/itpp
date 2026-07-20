@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ITPP genome browser</title>
+<style>
+  :root {
+    --bg:#0d1117; --panel:#161b22; --line:#30363d; --fg:#e6edf3; --dim:#8b949e;
+    --backbone:#3b82f6; --variant:#a855f7; --hit:#e3b341; --edge:#6e7681;
+    --aa:#2ea043;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg);
+    font:14px/1.5 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; }
+  header { padding:14px 20px; border-bottom:1px solid var(--line); background:var(--panel);
+    display:flex; gap:16px; align-items:center; flex-wrap:wrap; position:sticky; top:0; z-index:5; }
+  header h1 { font-size:16px; margin:0; font-weight:650; letter-spacing:.2px; }
+  header .meta { color:var(--dim); font-size:12px; }
+  .controls { display:flex; gap:10px; align-items:center; margin-left:auto; flex-wrap:wrap; }
+  select, input, button { background:#0d1117; color:var(--fg); border:1px solid var(--line);
+    border-radius:6px; padding:7px 10px; font-size:14px; }
+  input#q { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; letter-spacing:2px;
+    text-transform:uppercase; width:220px; }
+  button { cursor:pointer; }
+  button.toggle[aria-pressed=true] { border-color:var(--backbone); color:var(--backbone); }
+  #status { padding:8px 20px; color:var(--dim); font-size:13px; border-bottom:1px solid var(--line); }
+  #results { padding:8px 12px; }
+  .hit { border:1px solid var(--line); border-radius:10px; margin:12px 4px; background:var(--panel);
+    overflow:hidden; }
+  .hit .bar { display:flex; gap:14px; align-items:center; padding:8px 14px;
+    border-bottom:1px solid var(--line); flex-wrap:wrap; }
+  .hit .bar .coord { font-family:ui-monospace,monospace; color:var(--hit); font-weight:600; }
+  .hit .bar .tag { font-size:12px; color:var(--dim); }
+  .hit .bar .strand { border:1px solid var(--line); border-radius:4px; padding:1px 6px; font-size:12px; }
+  .tube { width:100%; overflow-x:auto; }
+  svg { display:block; }
+  .node rect { stroke-width:1.5; cursor:pointer; }
+  .node text { font-family:ui-monospace,monospace; font-size:11px; pointer-events:none; }
+  .node.backbone rect { fill:#132a4d; stroke:var(--backbone); }
+  .node.variant  rect { fill:#241436; stroke:var(--variant); }
+  .node.hit      rect { fill:#3a2f0a; stroke:var(--hit); stroke-width:2.5; }
+  .edge { fill:none; stroke:var(--edge); stroke-width:1.5; }
+  .collapse { cursor:pointer; }
+  .collapse text { font-size:11px; fill:var(--variant); font-family:ui-monospace,monospace; }
+  .codons { padding:10px 14px; overflow-x:auto; }
+  .codons table { border-collapse:collapse; font-family:ui-monospace,monospace; }
+  .codons td { padding:2px 7px; text-align:center; border:1px solid var(--line); }
+  .codons tr.mer td { color:var(--fg); }
+  .codons tr.aa td { color:var(--aa); font-weight:700; }
+  .codons .lbl { color:var(--dim); text-align:right; border:none; }
+  #tooltip { position:fixed; pointer-events:none; background:#000d; color:#fff; border:1px solid var(--line);
+    border-radius:6px; padding:6px 9px; font:12px/1.4 ui-monospace,monospace; z-index:20; display:none; max-width:320px; }
+  .empty { color:var(--dim); padding:24px; text-align:center; }
+  .legend { display:flex; gap:14px; font-size:12px; color:var(--dim); align-items:center; }
+  .legend b { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:4px; vertical-align:middle; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>ITPP genome browser</h1>
+    <div class="meta" id="dsmeta">loading…</div>
+  </div>
+  <div class="controls">
+    <label class="legend"><span><b style="background:#132a4d;border:1px solid var(--backbone)"></b>backbone</span>
+      <span><b style="background:#241436;border:1px solid var(--variant)"></b>variant</span>
+      <span><b style="background:#3a2f0a;border:1px solid var(--hit)"></b>match</span></label>
+    <select id="dataset" title="dataset / region"></select>
+    <input id="q" placeholder="type ATCG…" autocomplete="off" spellcheck="false" />
+    <button id="view3d" class="toggle" aria-pressed="false" title="3D view (coming)">3D</button>
+  </div>
+</header>
+<div id="status">Type a nucleotide query (A/C/G/T) to search the pangenome. Each match is a row; hover a node for its coordinate.</div>
+<div id="results"><div class="empty">— no query yet —</div></div>
+<div id="tooltip"></div>
+
+<script>/*__GLUE__*/</script>
+<script>
+"use strict";
+const WASM_B64 = "__WASM_B64__";
+const CONTAINER_B64 = "__CONTAINER_B64__";
+const GITHUB_RAW = "https://raw.githubusercontent.com/dr-who/itpp/main/database/"; // our project only
+
+function b64ToBytes(b64) {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+// ---- rendering ----
+const COLW = 150, LANEH = 56, NW = 108, NH = 32;
+const collapsed = new Map(); // key `${hitIdx}:${x}` -> true
+
+function nodeClass(n) { return n.hit ? "hit" : (n.backbone ? "backbone" : "variant"); }
+
+function renderHit(hit, idx) {
+  const wrap = document.createElement("div");
+  wrap.className = "hit";
+
+  const bar = document.createElement("div");
+  bar.className = "bar";
+  bar.innerHTML =
+    `<span class="coord">${hit.pos}</span>` +
+    `<span class="strand">${hit.strand}</span>` +
+    `<span class="tag">node ${hit.node} · ${hit.n_haplotypes} haplotypes</span>` +
+    `<span class="tag">protein: <b style="color:var(--aa)">${hit.protein || "—"}</b></span>`;
+  wrap.appendChild(bar);
+
+  const tube = document.createElement("div");
+  tube.className = "tube";
+  tube.appendChild(renderTube(hit, idx));
+  wrap.appendChild(tube);
+
+  wrap.appendChild(renderCodons(hit));
+  return wrap;
+}
+
+function renderTube(hit, idx) {
+  const nodes = hit.nodes;
+  const xs = nodes.map(n => n.x);
+  const minX = Math.min(...xs), maxX = Math.max(...xs);
+  const lanes = nodes.map(n => n.lane);
+  const minL = Math.min(0, ...lanes), maxL = Math.max(0, ...lanes);
+  const W = (maxX - minX) * COLW + NW + 60;
+  const H = (maxL - minL) * LANEH + NH + 40;
+  const cy = 20 - minL * LANEH;
+
+  const SVG = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(SVG, "svg");
+  svg.setAttribute("width", W); svg.setAttribute("height", H);
+
+  const sx = x => (x - minX) * COLW + 20;
+  const sy = lane => cy + lane * LANEH;
+
+  // which columns are collapsed (variant lanes hidden)
+  const isCollapsed = x => collapsed.get(`${idx}:${x}`) === true;
+  const hidden = new Set();
+  for (const n of nodes) if (!n.backbone && isCollapsed(n.x)) hidden.add(n.id);
+
+  // edges first (under nodes)
+  for (const [a, b] of hit.edges) {
+    if (hidden.has(a) || hidden.has(b)) continue;
+    const na = nodes.find(n => n.id === a), nb = nodes.find(n => n.id === b);
+    if (!na || !nb) continue;
+    const x1 = sx(na.x) + NW, y1 = sy(na.lane) + NH / 2;
+    const x2 = sx(nb.x), y2 = sy(nb.lane) + NH / 2;
+    const mx = (x1 + x2) / 2;
+    const p = document.createElementNS(SVG, "path");
+    p.setAttribute("class", "edge");
+    p.setAttribute("d", `M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}`);
+    svg.appendChild(p);
+  }
+
+  // collapse badges per bubble column
+  const colVariants = {};
+  for (const n of nodes) if (!n.backbone) colVariants[n.x] = (colVariants[n.x] || 0) + 1;
+  for (const x in colVariants) {
+    const badge = document.createElementNS(SVG, "g");
+    badge.setAttribute("class", "collapse");
+    const bx = sx(+x) + NW / 2, by = sy(minL) - 6;
+    const t = document.createElementNS(SVG, "text");
+    t.setAttribute("x", bx); t.setAttribute("y", by); t.setAttribute("text-anchor", "middle");
+    t.textContent = isCollapsed(+x) ? `▶ ${colVariants[x]} alleles` : `▼ ${colVariants[x]} alleles`;
+    badge.appendChild(t);
+    badge.addEventListener("click", () => {
+      collapsed.set(`${idx}:${+x}`, !isCollapsed(+x));
+      const fresh = renderTube(hit, idx);
+      svg.replaceWith(fresh);
+    });
+    svg.appendChild(badge);
+  }
+
+  // nodes
+  for (const n of nodes) {
+    if (hidden.has(n.id)) continue;
+    const g = document.createElementNS(SVG, "g");
+    g.setAttribute("class", "node " + nodeClass(n));
+    const r = document.createElementNS(SVG, "rect");
+    r.setAttribute("x", sx(n.x)); r.setAttribute("y", sy(n.lane));
+    r.setAttribute("width", NW); r.setAttribute("height", NH);
+    r.setAttribute("rx", 6);
+    g.appendChild(r);
+    const label = document.createElementNS(SVG, "text");
+    label.setAttribute("x", sx(n.x) + 8); label.setAttribute("y", sy(n.lane) + 20);
+    label.textContent = (n.seq.length > 12 ? n.seq.slice(0, 12) : n.seq);
+    g.appendChild(label);
+    r.addEventListener("mousemove", e => showTip(e,
+      `node ${n.id}${n.hit ? " ◆ match" : ""}\n${n.pos}\nlen ${n.len} bp\n${n.seq}`));
+    r.addEventListener("mouseleave", hideTip);
+    svg.appendChild(g);
+  }
+
+  // collapsed columns: a diamond on the backbone lane
+  for (const x in colVariants) {
+    if (!isCollapsed(+x)) continue;
+    const d = document.createElementNS(SVG, "path");
+    const cx = sx(+x) + NW + 6, ccy = sy(0) + NH / 2;
+    d.setAttribute("d", `M${cx},${ccy - 9} L${cx + 9},${ccy} L${cx},${ccy + 9} L${cx - 9},${ccy} Z`);
+    d.setAttribute("fill", "#241436"); d.setAttribute("stroke", "var(--variant)");
+    svg.appendChild(d);
+  }
+  return svg;
+}
+
+function renderCodons(hit) {
+  const box = document.createElement("div");
+  box.className = "codons";
+  if (!hit.codons.length) return box;
+  const aa = hit.protein.split("");
+  let mer = "<tr class='mer'><td class='lbl'>3-mers</td>";
+  let arow = "<tr class='aa'><td class='lbl'>protein</td>";
+  hit.codons.forEach((c, i) => { mer += `<td>${c}</td>`; arow += `<td>${aa[i] || ""}</td>`; });
+  box.innerHTML = `<table>${mer}</tr>${arow}</tr></table>`;
+  return box;
+}
+
+// ---- tooltip ----
+const tip = document.getElementById("tooltip");
+function showTip(e, text) {
+  tip.textContent = text; tip.style.display = "block";
+  tip.style.left = (e.clientX + 14) + "px"; tip.style.top = (e.clientY + 14) + "px";
+}
+function hideTip() { tip.style.display = "none"; }
+
+// ---- app ----
+let browser = null;
+const results = document.getElementById("results");
+const statusEl = document.getElementById("status");
+
+function runQuery() {
+  const q = document.getElementById("q").value.trim().toUpperCase().replace(/[^ACGTN]/g, "");
+  results.innerHTML = "";
+  collapsed.clear();
+  if (q.length < 2) { results.innerHTML = `<div class="empty">— type at least 2 bases —</div>`; return; }
+  const t0 = performance.now();
+  const data = JSON.parse(browser.query(q, 40, 4));
+  const dt = (performance.now() - t0).toFixed(1);
+  statusEl.textContent = `“${q}” → ${data.n_hits} match${data.n_hits === 1 ? "" : "es"} in ${dt} ms`;
+  if (!data.n_hits) { results.innerHTML = `<div class="empty">no matches for ${q}</div>`; return; }
+  data.hits.forEach((h, i) => results.appendChild(renderHit(h, i)));
+}
+
+document.getElementById("view3d").addEventListener("click", e => {
+  const b = e.currentTarget;
+  const on = b.getAttribute("aria-pressed") === "true";
+  b.setAttribute("aria-pressed", (!on).toString());
+  statusEl.textContent = on ? "2D tube-map." : "3D WebGL view is planned — using 2D tube-map for now.";
+});
+
+async function loadContainer(bytes) {
+  browser = new wasm_bindgen.GenomeBrowser(bytes);
+  document.getElementById("dsmeta").textContent =
+    `${browser.region} · ${browser.segments} segments · ${browser.haplotypes} haplotypes`;
+  const sel = document.getElementById("dataset");
+  sel.innerHTML = `<option>${browser.region}</option>`;
+}
+
+wasm_bindgen(b64ToBytes(WASM_B64).buffer).then(async () => {
+  await loadContainer(b64ToBytes(CONTAINER_B64));
+  const q = document.getElementById("q");
+  let timer = null;
+  q.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(runQuery, 120); });
+  q.focus();
+}).catch(err => {
+  statusEl.textContent = "failed to initialise WASM: " + err;
+});
+</script>
+</body>
+</html>

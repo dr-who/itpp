@@ -1,0 +1,477 @@
+//! The genome-browser engine over an ITPP container.
+//!
+//! Given a nucleotide query (e.g. `ATCG`) it finds every occurrence across the pangenome's
+//! segments (both strands), and for each one extracts the **local subgraph** — the nodes
+//! before and after the hit and the bubbles between them — laid out left→right so the UI can
+//! draw a tube-map. Backbone nodes carry a real genomic coordinate for mouse-over. It also
+//! translates the matched context into 3-mers and protein for the codon panel.
+//!
+//! Everything here is plain Rust and unit-tested natively; `lib.rs` wraps it for WASM.
+
+use crate::codon;
+use itpp_core::{seq::reverse_complement, Graph, NodeId, Strand};
+use std::collections::{BTreeMap, BTreeSet};
+
+/// One node placed in the tube-map.
+pub struct LNode {
+    pub id: NodeId,
+    pub x: i32,
+    pub lane: i32,
+    pub len: usize,
+    pub seq: String,
+    pub is_hit: bool,
+    pub backbone: bool,
+    pub pos: String,
+}
+
+/// One match of the query and its local graph context.
+pub struct Hit {
+    pub node: NodeId,
+    pub offset: usize,
+    pub strand: Strand,
+    pub pos: String,
+    pub haplotypes: Vec<String>,
+    pub nodes: Vec<LNode>,
+    pub edges: Vec<(NodeId, NodeId)>,
+    pub codons: Vec<String>,
+    pub protein: String,
+}
+
+pub struct Browser {
+    graph: Graph,
+    backbone_nodes: BTreeSet<NodeId>,
+    backbone_off: BTreeMap<NodeId, usize>, // backbone node -> cumulative bases before it
+    chrom: String,
+    start_coord: i64,
+    succ: BTreeMap<NodeId, Vec<NodeId>>,
+    pred: BTreeMap<NodeId, Vec<NodeId>>,
+    node_walks: BTreeMap<NodeId, Vec<usize>>,
+}
+
+impl Browser {
+    #[must_use]
+    pub fn new(graph: Graph) -> Self {
+        let backbone_nodes = graph.backbone_nodes();
+
+        // cumulative offset of each backbone node along the spine + parse genomic coord
+        let mut backbone_off = BTreeMap::new();
+        let mut cum = 0usize;
+        if let Some(bw) = graph.backbone_walk() {
+            for step in &bw.steps {
+                backbone_off.entry(step.node).or_insert(cum);
+                cum += graph.segments.get(&step.node).map_or(0, |s| s.seq.len());
+            }
+        }
+        let (chrom, start_coord) = parse_region(graph.backbone.as_deref().unwrap_or(""));
+
+        // adjacency + node→walks from the observed walks (real haplotype context)
+        let mut succ: BTreeMap<NodeId, Vec<NodeId>> = BTreeMap::new();
+        let mut pred: BTreeMap<NodeId, Vec<NodeId>> = BTreeMap::new();
+        let mut node_walks: BTreeMap<NodeId, Vec<usize>> = BTreeMap::new();
+        for (wi, w) in graph.walks.iter().enumerate() {
+            for pair in w.steps.windows(2) {
+                push_unique(&mut succ, pair[0].node, pair[1].node);
+                push_unique(&mut pred, pair[1].node, pair[0].node);
+            }
+            for s in &w.steps {
+                let e = node_walks.entry(s.node).or_default();
+                if e.last() != Some(&wi) {
+                    e.push(wi);
+                }
+            }
+        }
+
+        Browser { graph, backbone_nodes, backbone_off, chrom, start_coord, succ, pred, node_walks }
+    }
+
+    /// Human-readable region descriptor for the pulldown, e.g. `chr6:31,825,251 (MHC-C4)`.
+    #[must_use]
+    pub fn region(&self) -> String {
+        self.graph.backbone.clone().unwrap_or_else(|| "(no backbone)".into())
+    }
+
+    #[must_use]
+    pub fn n_segments(&self) -> usize {
+        self.graph.segments.len()
+    }
+
+    #[must_use]
+    pub fn n_haplotypes(&self) -> usize {
+        self.graph.walks.len()
+    }
+
+    /// Find the query across all segments (both strands); return up to `max_hits` hits, each
+    /// with a local subgraph laid out within `radius` graph-steps up/downstream.
+    #[must_use]
+    pub fn query(&self, raw: &str, max_hits: usize, radius: usize) -> Vec<Hit> {
+        let q: Vec<u8> = raw.trim().bytes().map(|b| b.to_ascii_uppercase()).collect();
+        if q.is_empty() {
+            return Vec::new();
+        }
+        let rc = reverse_complement(&q);
+        let mut hits = Vec::new();
+
+        for seg in self.graph.segments.values() {
+            let hay = seg.seq.as_bytes();
+            for (strand, needle) in [(Strand::Forward, &q), (Strand::Reverse, &rc)] {
+                // reverse strand only distinct if not a palindrome
+                if strand == Strand::Reverse && rc == q {
+                    continue;
+                }
+                let mut from = 0;
+                while let Some(rel) = find_sub(&hay[from..], needle) {
+                    let offset = from + rel;
+                    hits.push(self.build_hit(seg.id, offset, strand, radius));
+                    if hits.len() >= max_hits {
+                        return hits;
+                    }
+                    from = offset + 1;
+                }
+            }
+        }
+        hits
+    }
+
+    /// Run [`Browser::query`] and serialize the results to JSON for the UI. Each node carries
+    /// `x` (column) and `backbone`, so the UI can collapse the variant lanes of a column into a
+    /// single glyph and expand them on click.
+    #[must_use]
+    pub fn query_json(&self, raw: &str, max_hits: usize, radius: usize) -> String {
+        let hits = self.query(raw, max_hits, radius);
+        let q_up: String = raw.trim().to_ascii_uppercase();
+        let mut s = String::from("{");
+        s.push_str(&format!("\"region\":{},", jstr(&self.region())));
+        s.push_str(&format!("\"chrom\":{},", jstr(&self.chrom)));
+        s.push_str(&format!("\"query\":{},", jstr(&q_up)));
+        s.push_str(&format!("\"n_hits\":{},", hits.len()));
+        s.push_str("\"hits\":[");
+        for (i, h) in hits.iter().enumerate() {
+            if i > 0 {
+                s.push(',');
+            }
+            s.push_str(&hit_to_json(h));
+        }
+        s.push_str("]}");
+        s
+    }
+
+    fn build_hit(&self, node: NodeId, offset: usize, strand: Strand, radius: usize) -> Hit {
+        // BFS upstream (pred) and downstream (succ) collecting depth per node.
+        let mut depth: BTreeMap<NodeId, i32> = BTreeMap::new();
+        depth.insert(node, 0);
+        self.bfs(node, radius, true, &mut depth);
+        self.bfs(node, radius, false, &mut depth);
+
+        // group by x (depth) then assign lanes: backbone at lane 0, others alternate.
+        let mut by_x: BTreeMap<i32, Vec<NodeId>> = BTreeMap::new();
+        for (&n, &d) in &depth {
+            by_x.entry(d).or_default().push(n);
+        }
+        let mut nodes = Vec::new();
+        for (&x, ids) in &by_x {
+            let mut ordered = ids.clone();
+            ordered.sort_by_key(|n| (!self.backbone_nodes.contains(n), *n));
+            let mut alt = 1;
+            for n in ordered {
+                let lane = if self.backbone_nodes.contains(&n) {
+                    0
+                } else {
+                    let l = if alt % 2 == 1 { (alt + 1) / 2 } else { -(alt / 2) };
+                    alt += 1;
+                    l
+                };
+                let seg = &self.graph.segments[&n];
+                nodes.push(LNode {
+                    id: n,
+                    x,
+                    lane,
+                    len: seg.seq.len(),
+                    seq: preview(seg.seq.as_bytes()),
+                    is_hit: n == node,
+                    backbone: self.backbone_nodes.contains(&n),
+                    pos: self.node_pos(n),
+                });
+            }
+        }
+
+        // edges internal to the collected node set
+        let present: BTreeSet<NodeId> = depth.keys().copied().collect();
+        let mut edges = Vec::new();
+        for (&a, outs) in &self.succ {
+            if present.contains(&a) {
+                for &b in outs {
+                    if present.contains(&b) {
+                        edges.push((a, b));
+                    }
+                }
+            }
+        }
+
+        // haplotypes through the hit node
+        let haplotypes: Vec<String> = self
+            .node_walks
+            .get(&node)
+            .map(|idx| idx.iter().map(|&i| sample_name(&self.graph.walks[i].name)).collect())
+            .unwrap_or_default();
+
+        // codon/protein panel: translate the matched context on the hit node
+        let seg = &self.graph.segments[&node];
+        let window_end = (offset + 60).min(seg.seq.len());
+        let context = &seg.seq.as_bytes()[offset..window_end];
+        let codons = codon::codons(context, 0);
+        let protein = codon::translate(context, 0);
+
+        Hit {
+            node,
+            offset,
+            strand,
+            pos: self.hit_pos(node, offset),
+            haplotypes,
+            nodes,
+            edges,
+            codons,
+            protein,
+        }
+    }
+
+    fn bfs(&self, start: NodeId, radius: usize, upstream: bool, depth: &mut BTreeMap<NodeId, i32>) {
+        let adj = if upstream { &self.pred } else { &self.succ };
+        let mut frontier = vec![start];
+        for step in 1..=radius as i32 {
+            let mut next = Vec::new();
+            for n in frontier.drain(..) {
+                if let Some(neigh) = adj.get(&n) {
+                    for &m in neigh {
+                        let d = if upstream { -step } else { step };
+                        if let std::collections::btree_map::Entry::Vacant(e) = depth.entry(m) {
+                            e.insert(d);
+                            next.push(m);
+                        }
+                    }
+                }
+            }
+            frontier = next;
+            if frontier.is_empty() {
+                break;
+            }
+        }
+    }
+
+    fn node_pos(&self, n: NodeId) -> String {
+        if let Some(&off) = self.backbone_off.get(&n) {
+            format!("{}:{}", self.chrom, commas(self.start_coord + off as i64))
+        } else {
+            "(variant allele)".into()
+        }
+    }
+
+    fn hit_pos(&self, n: NodeId, offset: usize) -> String {
+        if let Some(&off) = self.backbone_off.get(&n) {
+            let c = self.start_coord + off as i64 + offset as i64;
+            format!("{}:{}", self.chrom, commas(c))
+        } else {
+            format!("variant node {n} +{offset}")
+        }
+    }
+}
+
+// ---- helpers ----------------------------------------------------------------
+
+fn jstr(s: &str) -> String {
+    let mut out = String::from("\"");
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            _ => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+fn hit_to_json(h: &Hit) -> String {
+    let mut s = String::from("{");
+    s.push_str(&format!("\"node\":{},", h.node));
+    s.push_str(&format!("\"offset\":{},", h.offset));
+    s.push_str(&format!("\"strand\":\"{}\",", h.strand.as_sign()));
+    s.push_str(&format!("\"pos\":{},", jstr(&h.pos)));
+    s.push_str(&format!("\"n_haplotypes\":{},", h.haplotypes.len()));
+    s.push_str("\"haplotypes\":[");
+    for (i, hp) in h.haplotypes.iter().enumerate() {
+        if i > 0 {
+            s.push(',');
+        }
+        s.push_str(&jstr(hp));
+    }
+    s.push_str("],");
+    s.push_str(&format!("\"protein\":{},", jstr(&h.protein)));
+    s.push_str("\"codons\":[");
+    for (i, c) in h.codons.iter().enumerate() {
+        if i > 0 {
+            s.push(',');
+        }
+        s.push_str(&jstr(c));
+    }
+    s.push_str("],\"nodes\":[");
+    for (i, n) in h.nodes.iter().enumerate() {
+        if i > 0 {
+            s.push(',');
+        }
+        s.push_str(&format!(
+            "{{\"id\":{},\"x\":{},\"lane\":{},\"len\":{},\"seq\":{},\"hit\":{},\"backbone\":{},\"pos\":{}}}",
+            n.id, n.x, n.lane, n.len, jstr(&n.seq), n.is_hit, n.backbone, jstr(&n.pos)
+        ));
+    }
+    s.push_str("],\"edges\":[");
+    for (i, (a, b)) in h.edges.iter().enumerate() {
+        if i > 0 {
+            s.push(',');
+        }
+        s.push_str(&format!("[{a},{b}]"));
+    }
+    s.push_str("]}");
+    s
+}
+
+fn push_unique(m: &mut BTreeMap<NodeId, Vec<NodeId>>, k: NodeId, v: NodeId) {
+    let e = m.entry(k).or_default();
+    if !e.contains(&v) {
+        e.push(v);
+    }
+}
+
+fn find_sub(hay: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() || needle.len() > hay.len() {
+        return None;
+    }
+    hay.windows(needle.len()).position(|w| w == needle)
+}
+
+fn preview(seq: &[u8]) -> String {
+    if seq.len() <= 24 {
+        String::from_utf8_lossy(seq).into_owned()
+    } else {
+        format!(
+            "{}…{}",
+            String::from_utf8_lossy(&seq[..12]),
+            String::from_utf8_lossy(&seq[seq.len() - 8..])
+        )
+    }
+}
+
+/// `chm13#chr6:31825251-31908851` → (`chr6`, 31825251).
+fn parse_region(name: &str) -> (String, i64) {
+    // take the substring after the last '#', then split on ':' and '-'
+    let tail = name.rsplit('#').next().unwrap_or(name);
+    if let Some((chrom, rest)) = tail.split_once(':') {
+        let start = rest.split('-').next().and_then(|s| s.parse::<i64>().ok()).unwrap_or(0);
+        (chrom.to_string(), start)
+    } else {
+        (tail.to_string(), 0)
+    }
+}
+
+/// `HG00438#1#JAHBCB…` → `HG00438#1` (sample + haplotype, dropping the contig coordinates).
+fn sample_name(walk: &str) -> String {
+    let parts: Vec<&str> = walk.split('#').collect();
+    match parts.len() {
+        0 => walk.to_string(),
+        1 => parts[0].to_string(),
+        _ => format!("{}#{}", parts[0], parts[1]),
+    }
+}
+
+fn commas(n: i64) -> String {
+    let neg = n < 0;
+    let s = n.unsigned_abs().to_string();
+    let b = s.as_bytes();
+    let mut out = String::new();
+    for (i, c) in b.iter().enumerate() {
+        if i > 0 && (b.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(*c as char);
+    }
+    if neg {
+        format!("-{out}")
+    } else {
+        out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use itpp_ingest::synth::{generate, SynthParams};
+
+    fn browser() -> Browser {
+        let g = generate(&SynthParams { haplotypes: 6, backbone_blocks: 20, seed: 3, ..Default::default() });
+        Browser::new(g)
+    }
+
+    #[test]
+    fn region_and_counts() {
+        let b = browser();
+        assert!(b.region().contains("backbone"));
+        assert!(b.n_segments() > 20);
+        assert_eq!(b.n_haplotypes(), 7);
+    }
+
+    #[test]
+    fn query_finds_a_known_substring() {
+        let b = browser();
+        // pull a real 8-mer out of the first backbone segment and search for it
+        let g = generate(&SynthParams { haplotypes: 6, backbone_blocks: 20, seed: 3, ..Default::default() });
+        let first = g.backbone_walk().unwrap().steps[0].node;
+        let sub = String::from_utf8(g.segments[&first].seq.as_bytes()[10..18].to_vec()).unwrap();
+        let hits = b.query(&sub, 50, 3);
+        assert!(!hits.is_empty(), "should find the 8-mer somewhere");
+        let h = &hits[0];
+        // the hit node is laid out at x=0, and appears in the node list
+        assert!(h.nodes.iter().any(|n| n.is_hit && n.x == 0));
+        // codon panel is populated
+        assert!(!h.codons.is_empty());
+    }
+
+    #[test]
+    fn empty_query_no_hits() {
+        assert!(browser().query("", 10, 2).is_empty());
+    }
+
+    #[test]
+    fn query_json_is_wellformed() {
+        let b = browser();
+        let g = generate(&SynthParams { haplotypes: 6, backbone_blocks: 20, seed: 3, ..Default::default() });
+        let first = g.backbone_walk().unwrap().steps[0].node;
+        let sub = String::from_utf8(g.segments[&first].seq.as_bytes()[10..18].to_vec()).unwrap();
+        let json = b.query_json(&sub, 10, 3);
+        assert!(json.starts_with('{') && json.ends_with('}'));
+        assert!(json.contains("\"hits\":["));
+        assert!(json.contains("\"backbone\":"));
+        assert!(json.contains("\"x\":"));
+        // balanced braces — cheap structural sanity
+        let opens = json.matches('{').count();
+        let closes = json.matches('}').count();
+        assert_eq!(opens, closes, "unbalanced braces in json");
+    }
+
+    #[test]
+    fn parse_region_works() {
+        assert_eq!(parse_region("chm13#chr6:31825251-31908851"), ("chr6".into(), 31825251));
+        assert_eq!(parse_region("CHM13_backbone"), ("CHM13_backbone".into(), 0));
+    }
+
+    #[test]
+    fn sample_name_trims_contig() {
+        assert_eq!(sample_name("HG00438#1#JAHBCB010:1-2"), "HG00438#1");
+        assert_eq!(sample_name("grch38"), "grch38");
+    }
+
+    #[test]
+    fn commas_format() {
+        assert_eq!(commas(31825251), "31,825,251");
+        assert_eq!(commas(0), "0");
+    }
+}

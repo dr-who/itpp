@@ -19,18 +19,33 @@ See [`docs/design.md`](docs/design.md) for the two-part-code cost model and
 ## Layout
 
 ```
-crates/
+source/crates/
   itpp-core     types: sequence, graph, walks, dictionaries, samples, container model
   itpp-codec    range coder + adaptive order-k model + multi-coder ledger
   itpp-format   the ITPP container: chunked, indexed, versioned, lossless round-trip
   itpp-ingest   GFA / FASTA importers + synthetic MHC-like fixture generator
   itpp-cli      the `itpp` binary
+gui/            Rust→WASM genome browser (tube-map viewer) + genome-browser.html
+database/       pangenome data: manifests + committed containers (the browser's dataset)
 spec/           the format specification (versioned)
 docs/           design + literature
 pipelines/      thin wrappers around upstream producers (vg, RepeatMasker, Kraken2, modkit)
-data/manifests/ pinned data URLs (downloads gitignored)
 experiments/    reproducible runs; EXP-0001 = MHC MVP
 results/metrics/ append-only bits/char ledger over commits
+```
+
+## Genome browser (Rust → WASM)
+
+Open **`gui/genome-browser.html`** in a browser (double-click — it's self-contained: the WASM
+engine and a real MHC dataset are inlined, works offline). Pick a region, type a nucleotide
+query (e.g. `ATCG`), and see one **row per match** with a left→right **tube-map** of the local
+graph — backbone vs variant alleles, split/join edges, collapsible bubbles, mouse-over genomic
+coordinates — plus a **3-mer → protein** panel. The same `itpp-core`/`-format` crates that write
+containers parse them in the browser.
+
+```sh
+bash gui/build.sh          # compile Rust→WASM and (re)assemble gui/genome-browser.html
+bash scripts/test.sh       # native Rust tests + clippy + WASM engine end-to-end (node)
 ```
 
 ## Quick start (self-contained, no genomics toolchain needed)
