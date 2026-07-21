@@ -88,6 +88,13 @@ impl Browser {
                 }
             }
         }
+        // Also take adjacency from edges (L-lines): in graphs where samples aren't stored as
+        // walks (e.g. minigraph-cactus rGFA), variant nodes connect to the backbone only via
+        // edges — without this they can't find a coordinate anchor and pile up at position 0.
+        for e in &graph.edges {
+            push_unique(&mut succ, e.from, e.to);
+            push_unique(&mut pred, e.to, e.from);
+        }
 
         let mut b = Browser {
             graph,
