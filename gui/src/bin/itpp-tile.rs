@@ -41,12 +41,26 @@ fn main() {
         max_level += 1;
     }
 
-    let mut tile_bp_per_level = Vec::new();
+    // tile width per level (ceil), computed up front
+    let tile_bp_per_level: Vec<i64> =
+        (0..=max_level).map(|l| { let n: i64 = 1 << l; (span + n - 1) / n }).collect();
+
+    // Write the manifest FIRST so a viewer can load and render the levels that are already
+    // done while the rest stream in (progressive tiling, important for whole-genome runs).
+    fs::create_dir_all(outdir).unwrap_or_else(|e| panic!("mkdir {outdir}: {e}"));
+    let tile_bp_list =
+        tile_bp_per_level.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(",");
+    let manifest = format!(
+        "{{\"chrom\":\"{}\",\"start\":{},\"span\":{},\"max_level\":{},\"coarse_above_bp\":{},\"seq_below_bp\":{},\"tile_bp\":[{}]}}",
+        b.chrom(), b.start(), span, max_level, COARSE_ABOVE_BP, SEQ_BELOW_BP, tile_bp_list
+    );
+    fs::write(format!("{outdir}/manifest.json"), manifest)
+        .unwrap_or_else(|e| panic!("write manifest: {e}"));
+
     let mut total_tiles = 0u64;
     for level in 0..=max_level {
         let ntiles: i64 = 1 << level;
-        let tile_bp = (span + ntiles - 1) / ntiles; // ceil, span & ntiles > 0
-        tile_bp_per_level.push(tile_bp);
+        let tile_bp = tile_bp_per_level[level as usize];
         let coarse = tile_bp > COARSE_ABOVE_BP;
         let leveldir = format!("{outdir}/L{level}");
         fs::create_dir_all(&leveldir).unwrap_or_else(|e| panic!("mkdir {leveldir}: {e}"));
@@ -63,21 +77,6 @@ fn main() {
             total_tiles += 1;
         }
     }
-
-    let tile_bp_list =
-        tile_bp_per_level.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(",");
-    let manifest = format!(
-        "{{\"chrom\":\"{}\",\"start\":{},\"span\":{},\"max_level\":{},\"coarse_above_bp\":{},\"seq_below_bp\":{},\"tile_bp\":[{}]}}",
-        b.chrom(),
-        b.start(),
-        span,
-        max_level,
-        COARSE_ABOVE_BP,
-        SEQ_BELOW_BP,
-        tile_bp_list
-    );
-    fs::write(format!("{outdir}/manifest.json"), manifest)
-        .unwrap_or_else(|e| panic!("write manifest: {e}"));
 
     println!(
         "tiled {} → {outdir}: {} levels (0..{}), {} tiles, span {} bp on {}",
