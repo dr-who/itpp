@@ -138,6 +138,7 @@ impl Browser {
     /// variants at their nearest backbone anchor, packed into alternating lanes. Returns the
     /// position map and the total span.
     fn compute_layout(&self) -> (BTreeMap<NodeId, (i64, i32)>, i64) {
+        let anchors = self.compute_anchors();
         let mut pos: BTreeMap<NodeId, (i64, i32)> = BTreeMap::new();
         for (&n, &off) in &self.backbone_off {
             pos.insert(n, (off as i64, 0));
@@ -147,7 +148,7 @@ impl Browser {
             .segments
             .values()
             .filter(|s| !self.backbone_nodes.contains(&s.id))
-            .map(|s| (s.id, self.anchor_x(s.id), s.seq.len()))
+            .map(|s| (s.id, anchors.get(&s.id).copied().unwrap_or(0), s.seq.len()))
             .collect();
         variants.sort_by_key(|v| v.1);
         let mut lane_end: Vec<i64> = Vec::new();
@@ -492,31 +493,32 @@ impl Browser {
         }
     }
 
-    /// x (bp offset) of the nearest backbone anchor to a variant node.
-    fn anchor_x(&self, v: NodeId) -> i64 {
-        // nearest backbone upstream → its end; else nearest downstream → its start; else 0
-        for (adj, downstream) in [(&self.pred, false), (&self.succ, true)] {
-            let mut seen: BTreeSet<NodeId> = BTreeSet::new();
-            let mut frontier = vec![v];
-            for _ in 0..8 {
-                let mut next = Vec::new();
-                for n in frontier.drain(..) {
-                    if let Some(neigh) = adj.get(&n) {
-                        for &m in neigh {
-                            if let Some(&off) = self.backbone_off.get(&m) {
-                                let len = self.graph.segments.get(&m).map_or(0, |s| s.seq.len());
-                                return if downstream { off as i64 } else { off as i64 + len as i64 };
-                            }
-                            if seen.insert(m) {
-                                next.push(m);
-                            }
+    /// Assign every non-backbone node the bp position of its **nearest backbone node**, via a
+    /// single multi-source breadth-first search seeded from all backbone nodes over the edge
+    /// graph. O(V+E) and reaches nodes at any depth — unlike a bounded per-node search, which
+    /// left deeply-nested variants stranded at position 0.
+    fn compute_anchors(&self) -> BTreeMap<NodeId, i64> {
+        use std::collections::VecDeque;
+        let mut pos: BTreeMap<NodeId, i64> = BTreeMap::new();
+        let mut q: VecDeque<NodeId> = VecDeque::new();
+        for (&n, &off) in &self.backbone_off {
+            pos.insert(n, off as i64);
+            q.push_back(n);
+        }
+        while let Some(n) = q.pop_front() {
+            let nx = pos[&n];
+            for adj in [&self.succ, &self.pred] {
+                if let Some(neigh) = adj.get(&n) {
+                    for &m in neigh {
+                        if let std::collections::btree_map::Entry::Vacant(e) = pos.entry(m) {
+                            e.insert(nx);
+                            q.push_back(m);
                         }
                     }
                 }
-                frontier = next;
             }
         }
-        0
+        pos
     }
 
     /// Node ids (and coords) of up to `max` matches of the query, for highlighting on the
